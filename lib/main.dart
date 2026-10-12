@@ -133,6 +133,16 @@ class Session {
 
   double get volume => exercises.fold(0.0, (a, e) => a + e.volume);
 
+  // 달력용 요약 텍스트 추출
+  String get summaryText {
+    if (routine != null && routine!.isNotEmpty) return routine!;
+    if (exercises.isNotEmpty) {
+      final names = exercises.map((e) => e.name).take(2).join(', ');
+      return exercises.length > 2 ? '$names..' : names;
+    }
+    return '';
+  }
+
   Map<String, dynamic> toJson() => {
         'd': date,
         'e': exercises.map((e) => e.toJson()).toList(),
@@ -502,7 +512,7 @@ class _SessionPageState extends State<SessionPage> {
     _save();
     if (session.isFinished) {
       _stopRest();
-      _toast('🎉 운동 기록 완료');
+      _toast('🎉 운동 완료 기록됨');
     }
   }
 
@@ -887,9 +897,14 @@ class _SessionPageState extends State<SessionPage> {
                 onPressed: _loadRoutine,
               ),
               const Spacer(),
-              IconButton(
-                icon: Icon(session.isFinished ? Icons.check_circle : Icons.check_circle_outline,
-                    color: session.isFinished ? Colors.tealAccent : Colors.grey),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: session.isFinished ? Colors.green : Colors.grey[800],
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                icon: Icon(session.isFinished ? Icons.check_circle : Icons.radio_button_unchecked, size: 16),
+                label: Text(session.isFinished ? '오늘 운동 완료' : '운동 완료하기', style: const TextStyle(fontSize: 12)),
                 onPressed: _toggleFinish,
               )
             ],
@@ -939,10 +954,10 @@ class _CalendarPageState extends State<CalendarPage> {
           const Divider(),
           Expanded(
             child: GridView.builder(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(6),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 7,
-                childAspectRatio: 1.0,
+                childAspectRatio: 0.8,
               ),
               itemCount: firstDayOfWeek + daysInMonth,
               itemBuilder: (context, index) {
@@ -956,14 +971,21 @@ class _CalendarPageState extends State<CalendarPage> {
                   orElse: () => Session(dKey, []),
                 );
 
+                final hasData = session.exercises.isNotEmpty;
                 Color bgColor = Colors.transparent;
-                if (session.isFinished) {
-                  bgColor = Colors.tealAccent.withOpacity(0.2);
+                
+                if (hasData) {
+                  // 완료 누르면 초록색, 안 누르고 기록만 있으면 붉은색
+                  bgColor = session.isFinished
+                      ? Colors.green.withOpacity(0.35)
+                      : Colors.redAccent.withOpacity(0.35);
                 }
+
+                final summary = session.summaryText;
 
                 return GestureDetector(
                   onTap: () {
-                    if (session.exercises.isNotEmpty) {
+                    if (hasData) {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -973,22 +995,40 @@ class _CalendarPageState extends State<CalendarPage> {
                     }
                   },
                   child: Container(
-                    margin: const EdgeInsets.all(4),
+                    margin: const EdgeInsets.all(2),
+                    padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
                       color: bgColor,
                       borderRadius: BorderRadius.circular(8),
                       border: dKey == todayStr
-                          ? Border.all(color: Colors.tealAccent, width: 1)
-                          : null,
+                          ? Border.all(color: Colors.tealAccent, width: 1.5)
+                          : Border.all(color: Colors.white10, width: 0.5),
                     ),
-                    child: Center(
-                      child: Text(
-                        '$day',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: dKey == todayStr ? Colors.tealAccent : Colors.white,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$day',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: dKey == todayStr ? FontWeight.bold : FontWeight.normal,
+                            color: dKey == todayStr ? Colors.tealAccent : Colors.white,
+                          ),
                         ),
-                      ),
+                        if (summary.isNotEmpty) ...[
+                          const Spacer(),
+                          Text(
+                            summary,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.white70,
+                              height: 1.1,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 );
@@ -1015,7 +1055,7 @@ class _BodyPageState extends State<BodyPage> {
   final _mCtrl = TextEditingController();
   final _fCtrl = TextEditingController();
 
-  int _selectedMetric = 0; // 0: 체중, 1: 골격근량, 2: 체지방률
+  int _selectedMetric = 0;
 
   void _addRecord() {
     final w = double.tryParse(_wCtrl.text);
