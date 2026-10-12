@@ -42,7 +42,6 @@ class SetEntry {
     this.rpe,
   });
 
-  // 추정 1RM 계산 (Epley 공식: W * (1 + R/30))
   double get estimated1RM => reps > 0 ? weight * (1 + reps / 30.0) : 0;
 
   Map<String, dynamic> toJson() => {
@@ -732,7 +731,7 @@ class _SessionPageState extends State<SessionPage> {
                 onPressed: () => _copyPreviousSets(e),
               ),
               IconButton(
-                icon: const Icon(Icons.delete, size: 20),
+                icon: const Icon(Icons.delete_outline, size: 20, color: Colors.redAccent),
                 onPressed: () {
                   setState(() => session.exercises.remove(e));
                   _save();
@@ -877,6 +876,13 @@ class _SessionPageState extends State<SessionPage> {
               if (v == true && isToday) _startRest(widget.store.defaultRestSeconds);
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.remove_circle_outline, size: 18, color: Colors.grey),
+            onPressed: () {
+              setState(() => e.sets.removeAt(idx));
+              _save();
+            },
+          )
         ],
       ),
     );
@@ -1122,7 +1128,6 @@ class _BodyPageState extends State<BodyPage> {
   final _mCtrl = TextEditingController();
   final _fCtrl = TextEditingController();
 
-  // 0: 체중, 1: 골격근량, 2: 체지방률
   int _selectedMetric = 0;
 
   void _addRecord() {
@@ -1138,6 +1143,13 @@ class _BodyPageState extends State<BodyPage> {
     _wCtrl.clear();
     _mCtrl.clear();
     _fCtrl.clear();
+  }
+
+  void _deleteRecord(BodyRecord record) {
+    setState(() {
+      widget.store.bodyRecords.remove(record);
+    });
+    widget.store.save();
   }
 
   @override
@@ -1231,6 +1243,10 @@ class _BodyPageState extends State<BodyPage> {
             ListTile(
               title: Text('${r.date}: ${_fmt(r.weight)}kg'),
               subtitle: Text('골격근량: ${r.muscle != null ? _fmt(r.muscle!) : "-"}kg · 체지방률: ${r.fat != null ? _fmt(r.fat!) : "-"}%'),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                onPressed: () => _deleteRecord(r),
+              ),
             )
         ],
       ),
@@ -1273,6 +1289,24 @@ class _RoutinePageState extends State<RoutinePage> {
     _save();
   }
 
+  Future<void> _deleteRoutine(Routine r) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('루틴 삭제'),
+        content: Text('"${r.name}" 루틴을 완전히 삭제할까요?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제', style: TextStyle(color: Colors.redAccent))),
+        ],
+      ),
+    );
+    if (ok == true) {
+      setState(() => widget.store.routines.remove(r));
+      _save();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final routines = widget.store.routines;
@@ -1290,12 +1324,16 @@ class _RoutinePageState extends State<RoutinePage> {
                 ExpansionTile(
                   title: Text(r.name, style: const TextStyle(color: Colors.cyanAccent)),
                   subtitle: Text('${r.exercises.length}개 종목'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                    onPressed: () => _deleteRoutine(r),
+                  ),
                   children: [
                     for (var i = 0; i < r.exercises.length; i++)
                       ListTile(
                         title: Text(r.exercises[i]),
                         trailing: IconButton(
-                          icon: const Icon(Icons.close),
+                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
                           onPressed: () {
                             setState(() => r.exercises.removeAt(i));
                             _save();
@@ -1319,6 +1357,24 @@ class HistoryPage extends StatefulWidget {
 }
 
 class _HistoryPageState extends State<HistoryPage> {
+  Future<void> _deleteSession(Session s) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('운동 기록 삭제'),
+        content: Text('${s.date} 운동 기록을 삭제할까요?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제', style: TextStyle(color: Colors.redAccent))),
+        ],
+      ),
+    );
+    if (ok == true) {
+      setState(() => widget.store.sessions.remove(s));
+      await widget.store.save();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final list = widget.store.sessions.reversed.toList();
@@ -1329,8 +1385,17 @@ class _HistoryPageState extends State<HistoryPage> {
           ListTile(
             title: Text('${s.date} ${s.routine ?? ''}'),
             subtitle: Text('볼륨 ${_fmt(s.volume)}kg ${s.sessionNote.isNotEmpty ? "· " + s.sessionNote : ""}'),
-            trailing: Icon(s.isFinished ? Icons.check_circle : Icons.hourglass_bottom,
-                color: s.isFinished ? Colors.green : Colors.grey),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(s.isFinished ? Icons.check_circle : Icons.hourglass_bottom,
+                    color: s.isFinished ? Colors.green : Colors.grey),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  onPressed: () => _deleteSession(s),
+                ),
+              ],
+            ),
             onTap: () async {
               await Navigator.push(
                   context,
