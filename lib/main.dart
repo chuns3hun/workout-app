@@ -67,8 +67,8 @@ class Exercise {
   List<SetEntry> sets;
   String memo;
   String supersetGroup; // NONE, A1, A2, B1, B2
-  int minReps; // 목표 하한 (예: 8)
-  int maxReps; // 목표 상한 (예: 12)
+  int minReps;
+  int maxReps;
   int rev = 0;
 
   Exercise(
@@ -118,9 +118,7 @@ class Session {
   String? routine;
   bool isFinished;
   String sessionNote;
-  bool isDeload; // 디로딩 모드
-  int sleepScore; // 수면 1~5점
-  int fatigueScore; // 피로도 1~5점
+  bool isDeload;
 
   Session(
     this.date,
@@ -129,8 +127,6 @@ class Session {
     this.isFinished = false,
     this.sessionNote = '',
     this.isDeload = false,
-    this.sleepScore = 3,
-    this.fatigueScore = 3,
   ]);
 
   double get volume => exercises.fold(0.0, (a, e) => a + e.volume);
@@ -142,8 +138,6 @@ class Session {
         'fin': isFinished,
         'sn': sessionNote,
         'del': isDeload,
-        'slp': sleepScore,
-        'fat': fatigueScore,
       };
 
   factory Session.fromJson(Map<String, dynamic> j) => Session(
@@ -155,8 +149,6 @@ class Session {
         (j['fin'] as bool?) ?? false,
         j['sn'] as String? ?? '',
         j['del'] as bool? ?? false,
-        j['slp'] as int? ?? 3,
-        j['fat'] as int? ?? 3,
       );
 }
 
@@ -348,7 +340,6 @@ class Store {
     final lastReps = prevSets.first.reps;
     final lastRpe = prevSets.first.rpe ?? 8.0;
 
-    // 목표 반복수 상한 채움 여부 체크
     if (lastReps >= e.maxReps && lastRpe <= 8.5) {
       return '🎯 목표 반복수(${e.maxReps}회) 달성! +2.5kg 증량 추천 (${_fmt(lastWeight + 2.5)}kg)';
     }
@@ -768,7 +759,6 @@ class _SessionPageState extends State<SessionPage> {
                 visualDensity: VisualDensity.compact,
               ),
               const SizedBox(width: 4),
-              // 슈퍼세트 그룹 선택
               DropdownButton<String>(
                 value: e.supersetGroup,
                 underline: const SizedBox(),
@@ -969,7 +959,6 @@ class _SessionPageState extends State<SessionPage> {
             onChanged: (v) {
               setState(() => s.done = v ?? false);
               _save();
-              // 슈퍼세트 첫 종목일 때는 타이머 생략
               if (v == true && isToday && e.supersetGroup == 'NONE') {
                 _startRest(widget.store.defaultRestSeconds);
               }
@@ -1088,54 +1077,6 @@ class _SessionPageState extends State<SessionPage> {
                 onPressed: _toggleFinish,
               ),
             ],
-          ),
-          // 수면 및 피로도 체크
-          Card(
-            color: Colors.white.withOpacity(0.04),
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const Text('수면 만족도: ', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                      for (var i = 1; i <= 5; i++)
-                        InkWell(
-                          onTap: () {
-                            setState(() => session.sleepScore = i);
-                            _save();
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: Icon(
-                              Icons.bed,
-                              size: 18,
-                              color: i <= session.sleepScore ? Colors.cyanAccent : Colors.grey[700],
-                            ),
-                          ),
-                        ),
-                      const Spacer(),
-                      const Text('피로도: ', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                      for (var i = 1; i <= 5; i++)
-                        InkWell(
-                          onTap: () {
-                            setState(() => session.fatigueScore = i);
-                            _save();
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: Icon(
-                              Icons.battery_alert,
-                              size: 18,
-                              color: i <= session.fatigueScore ? Colors.orangeAccent : Colors.grey[700],
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
           ),
           TextFormField(
             initialValue: session.sessionNote,
@@ -1635,7 +1576,7 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 }
 
-// ---------- 통계 & 리포트 ----------
+// ---------- 통계 & 1RM ----------
 class StatsPage extends StatefulWidget {
   final Store store;
   const StatsPage({super.key, required this.store});
@@ -1650,12 +1591,8 @@ class _StatsPageState extends State<StatsPage> {
   @override
   Widget build(BuildContext context) {
     final Map<String, int> muscleSets = {};
-    double totalMonthVolume = 0;
-    int finishedSessions = 0;
 
     for (final s in widget.store.sessions) {
-      if (s.isFinished) finishedSessions++;
-      totalMonthVolume += s.volume;
       for (final e in s.exercises) {
         final count = e.sets.where((x) => x.done && x.type == SetType.MAIN).length;
         muscleSets[e.targetMuscle] = (muscleSets[e.targetMuscle] ?? 0) + count;
@@ -1672,47 +1609,10 @@ class _StatsPageState extends State<StatsPage> {
         : <MapEntry<String, double>>[];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('통계 & 종합 리포트')),
+      appBar: AppBar(title: const Text('통계 & 부위별 볼륨 & 1RM')),
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          // 요약 대시보드 리포트
-          Card(
-            color: Colors.cyanAccent.withOpacity(0.08),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  Column(
-                    children: [
-                      const Text('총 완료 운동', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      const SizedBox(height: 4),
-                      Text('$finishedSessions회',
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
-                    ],
-                  ),
-                  Column(
-                    children: [
-                      const Text('누적 훈련 볼륨', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      const SizedBox(height: 4),
-                      Text('${_fmt(totalMonthVolume)}kg',
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
-                    ],
-                  ),
-                  Column(
-                    children: [
-                      const Text('등록 종목 수', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      const SizedBox(height: 4),
-                      Text('${exercises.length}개',
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
           const Text('부위별 완료 작업 세트 수', style: TextStyle(color: Colors.cyanAccent)),
           const SizedBox(height: 8),
           for (final entry in muscleSets.entries)
