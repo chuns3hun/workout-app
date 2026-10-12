@@ -46,7 +46,7 @@ class Session {
   String date;
   List<Exercise> exercises;
   String? routine;
-  bool isFinished; // 운동 완료 여부 추가
+  bool isFinished;
 
   Session(this.date, this.exercises, [this.routine, this.isFinished = false]);
   double get volume => exercises.fold(0.0, (a, e) => a + e.volume);
@@ -65,7 +65,7 @@ class Session {
             .map((e) => Exercise.fromJson(e as Map<String, dynamic>))
             .toList(),
         j['rt'] as String?,
-        (j['fin'] as bool?) ?? false, // 구버전 데이터 호환
+        (j['fin'] as bool?) ?? false,
       );
 }
 
@@ -707,6 +707,7 @@ class _SessionPageState extends State<SessionPage> {
                             color: Colors.cyanAccent)),
                   ),
                 ),
+                _nav('달력', Icons.calendar_month, () => CalendarPage(store: st)),
                 _nav('루틴', Icons.folder, () => RoutinePage(store: st)),
                 _nav('기록', Icons.history, () => HistoryPage(store: st)),
                 _nav('통계', Icons.bar_chart, () => StatsPage(store: st)),
@@ -758,6 +759,126 @@ class _SessionPageState extends State<SessionPage> {
             ],
           ),
           for (final e in session.exercises) _card(e),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------- 달력 화면 ----------
+class CalendarPage extends StatefulWidget {
+  final Store store;
+  const CalendarPage({super.key, required this.store});
+
+  @override
+  State<CalendarPage> createState() => _CalendarPageState();
+}
+
+class _CalendarPageState extends State<CalendarPage> {
+  DateTime _focusedMonth = DateTime.now();
+
+  @override
+  Widget build(BuildContext context) {
+    final daysInMonth = DateUtils.getDaysInMonth(_focusedMonth.year, _focusedMonth.month);
+    final firstDayOfWeek = DateTime(_focusedMonth.year, _focusedMonth.month, 1).weekday % 7;
+    final now = DateTime.now();
+    final todayStr = dateKey(now);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('${_focusedMonth.year}년 ${_focusedMonth.month}월'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.chevron_left),
+            onPressed: () => setState(() {
+              _focusedMonth = DateTime(_focusedMonth.year, _focusedMonth.month - 1);
+            }),
+          ),
+          IconButton(
+            icon: const Icon(Icons.chevron_right),
+            onPressed: () => setState(() {
+              _focusedMonth = DateTime(_focusedMonth.year, _focusedMonth.month + 1);
+            }),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: const [
+              Text('일', style: TextStyle(color: Colors.red)),
+              Text('월'), Text('화'), Text('수'), Text('목'), Text('금'),
+              Text('토', style: TextStyle(color: Colors.blue)),
+            ],
+          ),
+          const Divider(),
+          Expanded(
+            child: GridView.builder(
+              padding: const EdgeInsets.all(8),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 7,
+                childAspectRatio: 1.0,
+              ),
+              itemCount: firstDayOfWeek + daysInMonth,
+              itemBuilder: (context, index) {
+                if (index < firstDayOfWeek) return const SizedBox.shrink();
+                final day = index - firstDayOfWeek + 1;
+                final date = DateTime(_focusedMonth.year, _focusedMonth.month, day);
+                final dKey = dateKey(date);
+
+                // 미래 날짜 여부
+                final isFuture = date.isAfter(DateTime(now.year, now.month, now.day));
+                
+                // 세션 및 완료 여부 조회
+                final session = widget.store.sessions.firstWhere(
+                  (s) => s.date == dKey,
+                  orElse: () => Session(dKey, []),
+                );
+
+                Color bgColor = Colors.transparent;
+                if (!isFuture) {
+                  if (session.isFinished) {
+                    bgColor = Colors.green.withOpacity(0.4); // 운동 완료: 초록색
+                  } else if (dKey != todayStr || session.exercises.isNotEmpty) {
+                    bgColor = Colors.red.withOpacity(0.3); // 과거 미완료/휴식일: 빨간색
+                  }
+                }
+
+                return GestureDetector(
+                  onTap: () {
+                    if (session.exercises.isNotEmpty) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SessionPage(store: widget.store, session: session),
+                        ),
+                      );
+                    }
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: bgColor,
+                      borderRadius: BorderRadius.circular(8),
+                      border: dKey == todayStr
+                          ? Border.all(color: Colors.cyanAccent, width: 2)
+                          : null,
+                    ),
+                    child: Center(
+                      child: Text(
+                        '$day',
+                        style: TextStyle(
+                          fontWeight: dKey == todayStr ? FontWeight.bold : FontWeight.normal,
+                          color: isFuture ? Colors.grey : Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );
