@@ -641,7 +641,7 @@ class _SessionPageState extends State<SessionPage> {
               TextField(
                   controller: c,
                   autofocus: true,
-                  decoration: const InputDecoration(hintText: '종목명 입력')),
+                  decoration: const InputDecoration(hintText: '종목명 입력 (예: 벤치프레스)')),
               const SizedBox(height: 12),
               DropdownButton<String>(
                 value: muscle,
@@ -657,7 +657,7 @@ class _SessionPageState extends State<SessionPage> {
                 Wrap(
                   spacing: 4,
                   children: pastNames
-                      .take(6)
+                      .take(8)
                       .map((n) => ActionChip(
                             label: Text(n),
                             onPressed: () => Navigator.pop(ctx, n),
@@ -1283,9 +1283,57 @@ class _RoutinePageState extends State<RoutinePage> {
   void _save() => widget.store.save();
 
   Future<void> _addRoutine() async {
-    final n = await _ask('루틴 이름 (예: 푸시데이)');
+    final n = await _ask('새 루틴 이름 (예: 푸시데이)');
     if (n == null || n.isEmpty) return;
     setState(() => widget.store.routines.add(Routine(n, [])));
+    _save();
+  }
+
+  Future<void> _addExerciseToRoutine(Routine r) async {
+    final c = TextEditingController();
+    final pastNames = widget.store.getAllExerciseNames();
+
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('${r.name}에 운동 종목 추가'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: c,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '종목명 입력 (예: 벤치프레스, 체스트프레스)'),
+            ),
+            if (pastNames.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text('이전 기록 종목 선택:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 4,
+                children: pastNames
+                    .take(8)
+                    .map((n) => ActionChip(
+                          label: Text(n),
+                          onPressed: () => Navigator.pop(ctx, n),
+                        ))
+                    .toList(),
+              )
+            ]
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, c.text.trim()),
+            child: const Text('추가'),
+          ),
+        ],
+      ),
+    );
+
+    if (name == null || name.isEmpty || r.exercises.contains(name)) return;
+    setState(() => r.exercises.add(name));
     _save();
   }
 
@@ -1311,19 +1359,20 @@ class _RoutinePageState extends State<RoutinePage> {
   Widget build(BuildContext context) {
     final routines = widget.store.routines;
     return Scaffold(
-      appBar: AppBar(title: const Text('루틴')),
-      floatingActionButton: FloatingActionButton(
+      appBar: AppBar(title: const Text('루틴 관리')),
+      floatingActionButton: FloatingActionButton.extended(
           backgroundColor: Colors.cyanAccent,
           foregroundColor: Colors.black,
-          onPressed: _addRoutine,
-          child: const Icon(Icons.add)),
+          icon: const Icon(Icons.add),
+          label: const Text('새 루틴 만들기'),
+          onPressed: _addRoutine),
       body: routines.isEmpty
-          ? const Center(child: Text('등록된 루틴이 없습니다.'))
+          ? const Center(child: Text('등록된 루틴이 없습니다. 하단 버튼을 눌러 추가하세요.'))
           : ListView(children: [
               for (final r in routines)
                 ExpansionTile(
-                  title: Text(r.name, style: const TextStyle(color: Colors.cyanAccent)),
-                  subtitle: Text('${r.exercises.length}개 종목'),
+                  title: Text(r.name, style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                  subtitle: Text('${r.exercises.length}개 종목 등록됨'),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                     onPressed: () => _deleteRoutine(r),
@@ -1331,7 +1380,7 @@ class _RoutinePageState extends State<RoutinePage> {
                   children: [
                     for (var i = 0; i < r.exercises.length; i++)
                       ListTile(
-                        title: Text(r.exercises[i]),
+                        title: Text('• ${r.exercises[i]}'),
                         trailing: IconButton(
                           icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
                           onPressed: () {
@@ -1340,6 +1389,23 @@ class _RoutinePageState extends State<RoutinePage> {
                           },
                         ),
                       ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.cyanAccent,
+                              foregroundColor: Colors.black,
+                            ),
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('운동 종목 추가'),
+                            onPressed: () => _addExerciseToRoutine(r),
+                          ),
+                        ],
+                      ),
+                    )
                   ],
                 ),
             ]),
