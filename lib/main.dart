@@ -69,7 +69,7 @@ class Exercise {
   String supersetGroup;
   int minReps;
   int maxReps;
-  bool isCollapsed; // 접기/펴기 상태
+  bool isCollapsed;
   int rev = 0;
 
   Exercise(
@@ -578,7 +578,7 @@ class _SessionPageState extends State<SessionPage> {
           for (final x in routines)
             SimpleDialogOption(
               onPressed: () => Navigator.pop(ctx, x),
-              child: Text(x.name),
+              child: Text('${x.name} (${x.exercises.length}개 종목)'),
             ),
         ],
       ),
@@ -593,6 +593,7 @@ class _SessionPageState extends State<SessionPage> {
       session.routine = r.name;
     });
     _save();
+    _toast('${r.name} 루틴을 불러왔습니다.');
   }
 
   Future<void> _addExercise() async {
@@ -690,7 +691,6 @@ class _SessionPageState extends State<SessionPage> {
                   child: Text(e.targetMuscle, style: const TextStyle(fontSize: 10, color: Colors.grey)),
                 ),
                 const Spacer(),
-                // 접기 / 펴기 버튼
                 IconButton(
                   icon: Icon(e.isCollapsed ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up, size: 20, color: Colors.tealAccent),
                   onPressed: () {
@@ -1012,11 +1012,53 @@ class BodyPage extends StatefulWidget {
 
 class _BodyPageState extends State<BodyPage> {
   final _wCtrl = TextEditingController();
+  final _mCtrl = TextEditingController();
+  final _fCtrl = TextEditingController();
+
+  int _selectedMetric = 0; // 0: 체중, 1: 골격근량, 2: 체지방률
+
+  void _addRecord() {
+    final w = double.tryParse(_wCtrl.text);
+    if (w == null) return;
+    final m = double.tryParse(_mCtrl.text);
+    final f = double.tryParse(_fCtrl.text);
+
+    setState(() {
+      widget.store.bodyRecords.add(BodyRecord(dateKey(DateTime.now()), w, m, f));
+    });
+    widget.store.save();
+    _wCtrl.clear();
+    _mCtrl.clear();
+    _fCtrl.clear();
+  }
 
   @override
   Widget build(BuildContext context) {
     final records = widget.store.bodyRecords.reversed.toList();
-    final chartData = widget.store.bodyRecords.map((r) => r.weight).toList();
+    
+    List<double> chartData = [];
+    String metricLabel = '';
+    String unit = '';
+
+    if (_selectedMetric == 0) {
+      chartData = widget.store.bodyRecords.map((r) => r.weight).toList();
+      metricLabel = '체중';
+      unit = 'kg';
+    } else if (_selectedMetric == 1) {
+      chartData = widget.store.bodyRecords
+          .where((r) => r.muscle != null)
+          .map((r) => r.muscle!)
+          .toList();
+      metricLabel = '골격근량';
+      unit = 'kg';
+    } else {
+      chartData = widget.store.bodyRecords
+          .where((r) => r.fat != null)
+          .map((r) => r.fat!)
+          .toList();
+      metricLabel = '체지방률';
+      unit = '%';
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('신체 변화 기록')),
@@ -1027,26 +1069,54 @@ class _BodyPageState extends State<BodyPage> {
             children: [
               Expanded(child: TextField(controller: _wCtrl, decoration: const InputDecoration(labelText: '체중(kg)'), keyboardType: TextInputType.number)),
               const SizedBox(width: 8),
+              Expanded(child: TextField(controller: _mCtrl, decoration: const InputDecoration(labelText: '골격근량(kg)'), keyboardType: TextInputType.number)),
+              const SizedBox(width: 8),
+              Expanded(child: TextField(controller: _fCtrl, decoration: const InputDecoration(labelText: '체지방률(%)'), keyboardType: TextInputType.number)),
+              const SizedBox(width: 8),
               ElevatedButton(
-                onPressed: () {
-                  final w = double.tryParse(_wCtrl.text);
-                  if (w == null) return;
-                  setState(() {
-                    widget.store.bodyRecords.add(BodyRecord(dateKey(DateTime.now()), w));
-                  });
-                  widget.store.save();
-                  _wCtrl.clear();
-                },
+                onPressed: _addRecord,
                 child: const Text('입력'),
               )
             ],
           ),
           const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ChoiceChip(
+                label: const Text('체중'),
+                selected: _selectedMetric == 0,
+                onSelected: (selected) {
+                  if (selected) setState(() => _selectedMetric = 0);
+                },
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('골격근량'),
+                selected: _selectedMetric == 1,
+                onSelected: (selected) {
+                  if (selected) setState(() => _selectedMetric = 1);
+                },
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('체지방률'),
+                selected: _selectedMetric == 2,
+                onSelected: (selected) {
+                  if (selected) setState(() => _selectedMetric = 2);
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text('$metricLabel 추이 ($unit)', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          const SizedBox(height: 8),
           lineChart(chartData),
           const Divider(),
           for (final r in records)
             ListTile(
               title: Text('${r.date}: ${_fmt(r.weight)}kg'),
+              subtitle: Text('골격근량: ${r.muscle != null ? _fmt(r.muscle!) : "-"}kg · 체지방률: ${r.fat != null ? _fmt(r.fat!) : "-"}%'),
               trailing: IconButton(
                 icon: const Icon(Icons.close, size: 16, color: Colors.grey),
                 onPressed: () {
@@ -1073,6 +1143,54 @@ class RoutinePage extends StatefulWidget {
 }
 
 class _RoutinePageState extends State<RoutinePage> {
+  Future<void> _addExerciseToRoutine(Routine r) async {
+    final c = TextEditingController();
+    final pastNames = widget.store.getAllExerciseNames();
+
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('${r.name}에 종목 추가'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: c,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '종목명 입력 (예: 벤치프레스)'),
+            ),
+            if (pastNames.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text('이전 기록 종목 선택:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 4,
+                children: pastNames
+                    .take(8)
+                    .map((n) => ActionChip(
+                          label: Text(n, style: const TextStyle(fontSize: 11)),
+                          onPressed: () => Navigator.pop(ctx, n),
+                        ))
+                    .toList(),
+              )
+            ]
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, c.text.trim()),
+            child: const Text('추가'),
+          ),
+        ],
+      ),
+    );
+
+    if (name == null || name.isEmpty || r.exercises.contains(name)) return;
+    setState(() => r.exercises.add(name));
+    widget.store.save();
+  }
+
   @override
   Widget build(BuildContext context) {
     final routines = widget.store.routines;
@@ -1087,7 +1205,7 @@ class _RoutinePageState extends State<RoutinePage> {
           final name = await showDialog<String>(
             context: context,
             builder: (ctx) => AlertDialog(
-              title: const Text('새 루틴'),
+              title: const Text('새 루틴 이름'),
               content: TextField(controller: c, autofocus: true),
               actions: [TextButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('확인'))],
             ),
@@ -1101,9 +1219,9 @@ class _RoutinePageState extends State<RoutinePage> {
       body: ListView(
         children: [
           for (final r in routines)
-            ListTile(
-              title: Text(r.name),
-              subtitle: Text('${r.exercises.length}개 종목'),
+            ExpansionTile(
+              title: Text(r.name, style: const TextStyle(color: Colors.tealAccent, fontWeight: FontWeight.bold)),
+              subtitle: Text('${r.exercises.length}개 종목 등록됨'),
               trailing: IconButton(
                 icon: const Icon(Icons.close, size: 16, color: Colors.grey),
                 onPressed: () {
@@ -1111,6 +1229,32 @@ class _RoutinePageState extends State<RoutinePage> {
                   widget.store.save();
                 },
               ),
+              children: [
+                for (var i = 0; i < r.exercises.length; i++)
+                  ListTile(
+                    title: Text('• ${r.exercises[i]}'),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close, size: 16, color: Colors.grey),
+                      onPressed: () {
+                        setState(() => r.exercises.removeAt(i));
+                        widget.store.save();
+                      },
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('운동 종목 추가', style: TextStyle(fontSize: 12)),
+                        onPressed: () => _addExerciseToRoutine(r),
+                      ),
+                    ],
+                  ),
+                )
+              ],
             )
         ],
       ),
