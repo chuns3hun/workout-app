@@ -596,7 +596,6 @@ class _SessionPageState extends State<SessionPage> {
 
     if (selectedRoutine == null) return;
 
-    // 기존 종목이 있는 경우 교체 여부 확인
     if (session.exercises.isNotEmpty) {
       final shouldReplace = await showDialog<bool>(
         context: context,
@@ -713,6 +712,17 @@ class _SessionPageState extends State<SessionPage> {
   Widget _card(Exercise e) {
     final pr = widget.store.pr(e.name);
     final rec = widget.store.recommendNext(e, session.date);
+    final prevSets = widget.store.previous(e.name, session.date);
+
+    String prevSummary = '이전 기록 없음';
+    if (prevSets.isNotEmpty) {
+      final summaryList = prevSets
+          .asMap()
+          .entries
+          .map((entry) => '${entry.key + 1}세트 ${_fmt(entry.value.weight)}kg×${entry.value.reps}회')
+          .join(' | ');
+      prevSummary = '이전: $summaryList';
+    }
 
     return Card(
       key: ObjectKey(e),
@@ -740,7 +750,8 @@ class _SessionPageState extends State<SessionPage> {
                   },
                 ),
                 IconButton(
-                  icon: const Icon(Icons.content_copy, size: 16, color: Colors.grey),
+                  tooltip: '이전 기록 불러오기',
+                  icon: const Icon(Icons.content_copy, size: 16, color: Colors.tealAccent),
                   onPressed: () => _copyPreviousSets(e),
                 ),
                 IconButton(
@@ -760,6 +771,8 @@ class _SessionPageState extends State<SessionPage> {
               )
             else ...[
               Text('PR ${_fmt(pr)}kg  ·  볼륨 ${_fmt(e.volume)}kg', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+              const SizedBox(height: 4),
+              Text(prevSummary, style: TextStyle(color: Colors.grey[400], fontSize: 11)),
               const SizedBox(height: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -771,7 +784,7 @@ class _SessionPageState extends State<SessionPage> {
               ),
               const SizedBox(height: 8),
               for (var idx = 0; idx < e.sets.length; idx++) ...[
-                _setRow(e, e.sets[idx], idx),
+                _setRow(e, e.sets[idx], idx, prevSets.length > idx ? prevSets[idx] : null),
               ],
               Row(
                 children: [
@@ -809,7 +822,10 @@ class _SessionPageState extends State<SessionPage> {
     );
   }
 
-  Widget _setRow(Exercise e, SetEntry s, int idx) {
+  Widget _setRow(Exercise e, SetEntry s, int idx, SetEntry? prevSet) {
+    final prevWHint = prevSet != null ? '${_fmt(prevSet.weight)}kg' : 'kg';
+    final prevRHint = prevSet != null ? '${prevSet.reps}회' : '회';
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -820,7 +836,12 @@ class _SessionPageState extends State<SessionPage> {
             child: TextFormField(
               key: ValueKey('w_${e.rev}_$idx'),
               initialValue: s.weight == 0 ? '' : _fmt(s.weight),
-              decoration: const InputDecoration(hintText: 'kg', isDense: true, border: InputBorder.none),
+              decoration: InputDecoration(
+                hintText: prevWHint,
+                hintStyle: TextStyle(color: Colors.grey[600], fontSize: 13),
+                isDense: true,
+                border: InputBorder.none,
+              ),
               keyboardType: TextInputType.number,
               style: const TextStyle(fontSize: 14),
               onChanged: (v) {
@@ -833,7 +854,12 @@ class _SessionPageState extends State<SessionPage> {
             child: TextFormField(
               key: ValueKey('r_${e.rev}_$idx'),
               initialValue: s.reps == 0 ? '' : '${s.reps}',
-              decoration: const InputDecoration(hintText: '회', isDense: true, border: InputBorder.none),
+              decoration: InputDecoration(
+                hintText: prevRHint,
+                hintStyle: TextStyle(color: Colors.grey[600], fontSize: 13),
+                isDense: true,
+                border: InputBorder.none,
+              ),
               keyboardType: TextInputType.number,
               style: const TextStyle(fontSize: 14),
               onChanged: (v) {
