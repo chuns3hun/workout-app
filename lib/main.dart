@@ -133,7 +133,6 @@ class Session {
 
   double get volume => exercises.fold(0.0, (a, e) => a + e.volume);
 
-  // 달력용 요약 텍스트 추출
   String get summaryText {
     if (routine != null && routine!.isNotEmpty) return routine!;
     if (exercises.isNotEmpty) {
@@ -580,7 +579,8 @@ class _SessionPageState extends State<SessionPage> {
       _toast('등록된 루틴이 없습니다.');
       return;
     }
-    final r = await showDialog<Routine>(
+
+    final selectedRoutine = await showDialog<Routine>(
       context: context,
       builder: (ctx) => SimpleDialog(
         title: const Text('루틴 선택'),
@@ -593,17 +593,48 @@ class _SessionPageState extends State<SessionPage> {
         ],
       ),
     );
-    if (r == null) return;
+
+    if (selectedRoutine == null) return;
+
+    // 기존 종목이 있는 경우 교체 여부 확인
+    if (session.exercises.isNotEmpty) {
+      final shouldReplace = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('루틴 불러오기'),
+          content: Text('현재 화면에 작성된 종목들을 지우고 "${selectedRoutine.name}" 루틴으로 교체할까요?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('덧붙이기'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('기존 항목 비우고 교체', style: TextStyle(color: Colors.tealAccent)),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldReplace == null) return;
+
+      if (shouldReplace == true) {
+        setState(() {
+          session.exercises.clear();
+        });
+      }
+    }
+
     setState(() {
-      for (final name in r.exercises) {
+      for (final name in selectedRoutine.exercises) {
         if (session.exercises.any((e) => e.name == name)) continue;
         final prev = widget.store.previous(name, session.date);
         session.exercises.add(Exercise(name, prev.isEmpty ? [SetEntry()] : prev));
       }
-      session.routine = r.name;
+      session.routine = selectedRoutine.name;
     });
     _save();
-    _toast('${r.name} 루틴을 불러왔습니다.');
+    _toast('${selectedRoutine.name} 루틴을 불러왔습니다.');
   }
 
   Future<void> _addExercise() async {
@@ -975,7 +1006,6 @@ class _CalendarPageState extends State<CalendarPage> {
                 Color bgColor = Colors.transparent;
                 
                 if (hasData) {
-                  // 완료 누르면 초록색, 안 누르고 기록만 있으면 붉은색
                   bgColor = session.isFinished
                       ? Colors.green.withOpacity(0.35)
                       : Colors.redAccent.withOpacity(0.35);
