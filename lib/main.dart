@@ -69,6 +69,7 @@ class Exercise {
   String supersetGroup;
   int minReps;
   int maxReps;
+  bool isCollapsed; // 접기/펴기 상태
   int rev = 0;
 
   Exercise(
@@ -79,6 +80,7 @@ class Exercise {
     this.supersetGroup = 'NONE',
     this.minReps = 8,
     this.maxReps = 12,
+    this.isCollapsed = false,
   });
 
   double get volume => sets
@@ -97,6 +99,7 @@ class Exercise {
         'ss': supersetGroup,
         'minR': minReps,
         'maxR': maxReps,
+        'col': isCollapsed,
       };
 
   factory Exercise.fromJson(Map<String, dynamic> j) => Exercise(
@@ -109,6 +112,7 @@ class Exercise {
         supersetGroup: j['ss'] as String? ?? 'NONE',
         minReps: j['minR'] as int? ?? 8,
         maxReps: j['maxR'] as int? ?? 12,
+        isCollapsed: j['col'] as bool? ?? false,
       );
 }
 
@@ -118,7 +122,6 @@ class Session {
   String? routine;
   bool isFinished;
   String sessionNote;
-  bool isDeload;
 
   Session(
     this.date,
@@ -126,7 +129,6 @@ class Session {
     this.routine,
     this.isFinished = false,
     this.sessionNote = '',
-    this.isDeload = false,
   ]);
 
   double get volume => exercises.fold(0.0, (a, e) => a + e.volume);
@@ -137,18 +139,16 @@ class Session {
         'rt': routine,
         'fin': isFinished,
         'sn': sessionNote,
-        'del': isDeload,
       };
 
   factory Session.fromJson(Map<String, dynamic> j) => Session(
         j['d'] as String,
-        (j['s'] as List)
+        (j['e'] as List)
             .map((e) => Exercise.fromJson(e as Map<String, dynamic>))
             .toList(),
         j['rt'] as String?,
         (j['fin'] as bool?) ?? false,
         j['sn'] as String? ?? '',
-        j['del'] as bool? ?? false,
       );
 }
 
@@ -328,11 +328,7 @@ class Store {
     return m;
   }
 
-  String recommendNext(Exercise e, String date, bool isDeload) {
-    if (isDeload) {
-      return '🌿 디로딩 주간: 70% 중량 유지';
-    }
-
+  String recommendNext(Exercise e, String date) {
     final prevSets = previous(e.name, date).where((s) => s.type == SetType.MAIN).toList();
     if (prevSets.isEmpty) return '기록 부족 (첫 수행)';
 
@@ -425,7 +421,7 @@ void main() async {
     darkTheme: ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      scaffoldBackgroundColor: const Color(0xFF09090B), // OLED Minimal Dark
+      scaffoldBackgroundColor: const Color(0xFF09090B),
       cardTheme: CardThemeData(
         color: const Color(0xFF121215),
         elevation: 0,
@@ -674,7 +670,7 @@ class _SessionPageState extends State<SessionPage> {
 
   Widget _card(Exercise e) {
     final pr = widget.store.pr(e.name);
-    final rec = widget.store.recommendNext(e, session.date, session.isDeload);
+    final rec = widget.store.recommendNext(e, session.date);
 
     return Card(
       key: ObjectKey(e),
@@ -694,6 +690,14 @@ class _SessionPageState extends State<SessionPage> {
                   child: Text(e.targetMuscle, style: const TextStyle(fontSize: 10, color: Colors.grey)),
                 ),
                 const Spacer(),
+                // 접기 / 펴기 버튼
+                IconButton(
+                  icon: Icon(e.isCollapsed ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up, size: 20, color: Colors.tealAccent),
+                  onPressed: () {
+                    setState(() => e.isCollapsed = !e.isCollapsed);
+                    _save();
+                  },
+                ),
                 IconButton(
                   icon: const Icon(Icons.content_copy, size: 16, color: Colors.grey),
                   onPressed: () => _copyPreviousSets(e),
@@ -707,49 +711,57 @@ class _SessionPageState extends State<SessionPage> {
                 ),
               ],
             ),
-            Text('PR ${_fmt(pr)}kg  ·  볼륨 ${_fmt(e.volume)}kg', style: const TextStyle(color: Colors.grey, fontSize: 11)),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.tealAccent.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(6),
+            if (e.isCollapsed)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('${e.sets.length}세트 · PR ${_fmt(pr)}kg · 볼륨 ${_fmt(e.volume)}kg',
+                    style: const TextStyle(color: Colors.grey, fontSize: 12)),
+              )
+            else ...[
+              Text('PR ${_fmt(pr)}kg  ·  볼륨 ${_fmt(e.volume)}kg', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.tealAccent.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(rec, style: const TextStyle(fontSize: 11, color: Colors.tealAccent)),
               ),
-              child: Text(rec, style: const TextStyle(fontSize: 11, color: Colors.tealAccent)),
-            ),
-            const SizedBox(height: 8),
-            for (var idx = 0; idx < e.sets.length; idx++) ...[
-              _setRow(e, e.sets[idx], idx),
-            ],
-            Row(
-              children: [
-                TextButton(
-                  onPressed: () {
-                    final last = e.sets.isEmpty ? null : e.sets.last;
-                    setState(() => e.sets.add(SetEntry(
-                          weight: last?.weight ?? 0,
-                          reps: last?.reps ?? 0,
-                          type: SetType.MAIN,
-                        )));
-                    _save();
-                  },
-                  child: const Text('+ 세트', style: TextStyle(fontSize: 12, color: Colors.tealAccent)),
-                ),
-                TextButton(
-                  onPressed: () {
-                    final last = e.sets.isEmpty ? null : e.sets.last;
-                    if (last == null) return;
-                    setState(() => e.sets.add(SetEntry(
-                          weight: (last.weight * 0.8).roundToDouble(),
-                          reps: last.reps,
-                          type: SetType.DROP,
-                        )));
-                    _save();
-                  },
-                  child: const Text('-20% 드롭', style: TextStyle(fontSize: 12, color: Colors.amberAccent)),
-                ),
+              const SizedBox(height: 8),
+              for (var idx = 0; idx < e.sets.length; idx++) ...[
+                _setRow(e, e.sets[idx], idx),
               ],
-            ),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () {
+                      final last = e.sets.isEmpty ? null : e.sets.last;
+                      setState(() => e.sets.add(SetEntry(
+                            weight: last?.weight ?? 0,
+                            reps: last?.reps ?? 0,
+                            type: SetType.MAIN,
+                          )));
+                      _save();
+                    },
+                    child: const Text('+ 세트', style: TextStyle(fontSize: 12, color: Colors.tealAccent)),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      final last = e.sets.isEmpty ? null : e.sets.last;
+                      if (last == null) return;
+                      setState(() => e.sets.add(SetEntry(
+                            weight: (last.weight * 0.8).roundToDouble(),
+                            reps: last.reps,
+                            type: SetType.DROP,
+                          )));
+                      _save();
+                    },
+                    child: const Text('-20% 드롭', style: TextStyle(fontSize: 12, color: Colors.amberAccent)),
+                  ),
+                ],
+              ),
+            ]
           ],
         ),
       ),
