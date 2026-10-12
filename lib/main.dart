@@ -11,34 +11,78 @@ String _fmt(double w) =>
 String dateKey(DateTime n) =>
     '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
 
-// ---------- 모델 ----------
+// ---------- 세트 타입 및 모델 ----------
+enum SetType { WARMUP, MAIN, DROP }
+
+extension SetTypeExt on SetType {
+  String get label {
+    switch (this) {
+      case SetType.WARMUP:
+        return '웜업';
+      case SetType.MAIN:
+        return '작업';
+      case SetType.DROP:
+        return '드롭';
+    }
+  }
+}
+
 class SetEntry {
   double weight;
   int reps;
   bool done;
-  SetEntry({this.weight = 0, this.reps = 0, this.done = false});
-  Map<String, dynamic> toJson() => {'w': weight, 'r': reps, 'd': done};
+  SetType type;
+  double? rpe;
+
+  SetEntry({
+    this.weight = 0,
+    this.reps = 0,
+    this.done = false,
+    this.type = SetType.MAIN,
+    this.rpe,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'w': weight,
+        'r': reps,
+        'd': done,
+        't': type.index,
+        'rpe': rpe,
+      };
+
   factory SetEntry.fromJson(Map<String, dynamic> j) => SetEntry(
         weight: (j['w'] as num).toDouble(),
         reps: j['r'] as int,
         done: j['d'] as bool,
+        type: SetType.values[(j['t'] as int?) ?? 1],
+        rpe: (j['rpe'] as num?)?.toDouble(),
       );
 }
 
 class Exercise {
   String name;
+  String targetMuscle; // 가슴, 등, 어깨, 하체, 이두, 삼두
   List<SetEntry> sets;
   int rev = 0;
-  Exercise(this.name, this.sets);
-  double get volume =>
-      sets.where((s) => s.done).fold(0.0, (a, s) => a + s.weight * s.reps);
-  Map<String, dynamic> toJson() =>
-      {'n': name, 's': sets.map((e) => e.toJson()).toList()};
+
+  Exercise(this.name, this.sets, {this.targetMuscle = '가슴'});
+
+  double get volume => sets
+      .where((s) => s.done && s.type != SetType.WARMUP)
+      .fold(0.0, (a, s) => a + s.weight * s.reps);
+
+  Map<String, dynamic> toJson() => {
+        'n': name,
+        'tm': targetMuscle,
+        's': sets.map((e) => e.toJson()).toList(),
+      };
+
   factory Exercise.fromJson(Map<String, dynamic> j) => Exercise(
         j['n'] as String,
         (j['s'] as List)
             .map((e) => SetEntry.fromJson(e as Map<String, dynamic>))
             .toList(),
+        targetMuscle: j['tm'] as String? ?? '기타',
       );
 }
 
@@ -49,16 +93,16 @@ class Session {
   bool isFinished;
 
   Session(this.date, this.exercises, [this.routine, this.isFinished = false]);
+
   double get volume => exercises.fold(0.0, (a, e) => a + e.volume);
-  bool get hasDone => exercises.any((e) => e.sets.any((x) => x.done));
-  
+
   Map<String, dynamic> toJson() => {
         'd': date,
         'e': exercises.map((e) => e.toJson()).toList(),
         'rt': routine,
         'fin': isFinished,
       };
-      
+
   factory Session.fromJson(Map<String, dynamic> j) => Session(
         j['d'] as String,
         (j['e'] as List)
@@ -73,6 +117,7 @@ class Routine {
   String name;
   List<String> exercises;
   Routine(this.name, this.exercises);
+
   Map<String, dynamic> toJson() => {'n': name, 'x': exercises};
   factory Routine.fromJson(Map<String, dynamic> j) => Routine(
         j['n'] as String,
@@ -80,13 +125,37 @@ class Routine {
       );
 }
 
+class BodyRecord {
+  String date;
+  double weight;
+  double? muscle;
+  double? fat;
+
+  BodyRecord(this.date, this.weight, [this.muscle, this.fat]);
+
+  Map<String, dynamic> toJson() => {
+        'd': date,
+        'w': weight,
+        'm': muscle,
+        'f': fat,
+      };
+
+  factory BodyRecord.fromJson(Map<String, dynamic> j) => BodyRecord(
+        j['d'] as String,
+        (j['w'] as num).toDouble(),
+        (j['m'] as num?)?.toDouble(),
+        (j['f'] as num?)?.toDouble(),
+      );
+}
+
 // ---------- 저장소 ----------
 class Store {
   final List<Session> sessions = [];
   final List<Routine> routines = [];
+  final List<BodyRecord> bodyRecords = [];
   int defaultRestSeconds = 90;
 
-  static const _keys = ['sessions', 'routines', 'rest_sec'];
+  static const _keys = ['sessions', 'routines', 'body_records', 'rest_sec'];
 
   static List<T> _l<T>(dynamic raw, T Function(Map<String, dynamic>) f) =>
       ((raw as List?) ?? []).map((e) => f(e as Map<String, dynamic>)).toList();
@@ -94,6 +163,7 @@ class Store {
   Map<String, dynamic> _toMap() => {
         'sessions': sessions.map((s) => s.toJson()).toList(),
         'routines': routines.map((r) => r.toJson()).toList(),
+        'body_records': bodyRecords.map((b) => b.toJson()).toList(),
         'rest_sec': defaultRestSeconds,
       };
 
@@ -109,6 +179,12 @@ class Store {
       routines
         ..clear()
         ..addAll(_l(m['routines'], Routine.fromJson));
+    }
+    if (m['body_records'] != null) {
+      bodyRecords
+        ..clear()
+        ..addAll(_l(m['body_records'], BodyRecord.fromJson)
+          ..sort((a, b) => a.date.compareTo(b.date)));
     }
     if (m['rest_sec'] != null) {
       defaultRestSeconds = m['rest_sec'] as int? ?? 90;
@@ -158,9 +234,7 @@ class Store {
 
   List<String> getAllExerciseNames() {
     final names = <String>{};
-    for (final r in routines) {
-      names.addAll(r.exercises);
-    }
+    for (final r in routines) names.addAll(r.exercises);
     for (final s in sessions) {
       for (final e in s.exercises) {
         if (e.name.isNotEmpty) names.add(e.name);
@@ -175,7 +249,12 @@ class Store {
       for (final e in s.exercises) {
         if (e.name == name) {
           return e.sets
-              .map((x) => SetEntry(weight: x.weight, reps: x.reps))
+              .map((x) => SetEntry(
+                    weight: x.weight,
+                    reps: x.reps,
+                    type: x.type,
+                    rpe: x.rpe,
+                  ))
               .toList();
         }
       }
@@ -195,12 +274,29 @@ class Store {
     }
     return m;
   }
+
+  String recommendNext(String name, String date) {
+    final prevSets = previous(name, date).where((s) => s.type == SetType.MAIN).toList();
+    if (prevSets.isEmpty) return '기록 부족 (첫 수행)';
+
+    final lastWeight = prevSets.first.weight;
+    final lastReps = prevSets.first.reps;
+    final lastRpe = prevSets.first.rpe ?? 8.0;
+
+    if (lastRpe <= 7.0) {
+      return '추천: ${_fmt(lastWeight + 2.5)}kg × ${lastReps}회 (+2.5kg 증량 가능)';
+    } else if (lastRpe >= 9.5) {
+      return '추천: ${_fmt(lastWeight)}kg × ${lastReps}회 (현재 중량 유지 및 자세 집중)';
+    } else {
+      return '추천: ${_fmt(lastWeight)}kg × ${lastReps + 1}회 (+1회 증강 도전에 권장)';
+    }
+  }
 }
 
 Widget lineChart(List<double> ys) {
   if (ys.length < 2) {
     return const SizedBox(
-        height: 120, child: Center(child: Text('그래프는 기록 2개 이상부터 표시')));
+        height: 120, child: Center(child: Text('기록 2개 이상부터 그래프 표시')));
   }
 
   final minY = ys.reduce((a, b) => a < b ? a : b);
@@ -208,7 +304,7 @@ Widget lineChart(List<double> ys) {
   final margin = (maxY - minY) == 0 ? 1.0 : (maxY - minY) * 0.1;
 
   return SizedBox(
-    height: 200,
+    height: 180,
     child: Padding(
       padding: const EdgeInsets.only(right: 16, top: 16, left: 8, bottom: 8),
       child: LineChart(
@@ -221,9 +317,9 @@ Widget lineChart(List<double> ys) {
           ),
           gridData: FlGridData(
             show: true,
-            getDrawingHorizontalLine: (value) =>
+            getDrawingHorizontalLine: (_) =>
                 FlLine(color: Colors.white10, strokeWidth: 1),
-            getDrawingVerticalLine: (value) =>
+            getDrawingVerticalLine: (_) =>
                 FlLine(color: Colors.white10, strokeWidth: 1),
           ),
           lineBarsData: [
@@ -271,11 +367,12 @@ void main() async {
   ));
 }
 
-// ---------- 운동 화면 ----------
+// ---------- 운동 기록 화면 ----------
 class SessionPage extends StatefulWidget {
   final Store store;
   final Session? session;
   const SessionPage({super.key, required this.store, this.session});
+
   @override
   State<SessionPage> createState() => _SessionPageState();
 }
@@ -333,15 +430,15 @@ class _SessionPageState extends State<SessionPage> {
     _save();
     if (session.isFinished) {
       _stopRest();
-      _toast('🎉 오늘 운동을 완료했습니다!');
+      _toast('🎉 오늘 운동 기록 완료!');
     }
   }
 
   Widget _restBar() {
     final r = _remaining();
     final text = r == 0
-        ? '휴식 종료'
-        : '휴식 ${r ~/ 60}:${(r % 60).toString().padLeft(2, '0')}';
+        ? '휴식 종료!'
+        : '휴식 중 ${r ~/ 60}:${(r % 60).toString().padLeft(2, '0')}';
     return Material(
       elevation: 8,
       color: const Color(0xFF2C2C2C),
@@ -393,8 +490,8 @@ class _SessionPageState extends State<SessionPage> {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('백업 / 복원'),
-        content: const Text('백업 파일을 다운로드하거나, 이전에 저장한 백업 파일(.json)을 선택하여 복원하세요.'),
+        title: const Text('데이터 백업/복원'),
+        content: const Text('운동 데이터를 백업 파일로 저장하거나 복원합니다.'),
         actions: [
           TextButton(
             onPressed: () {
@@ -407,9 +504,9 @@ class _SessionPageState extends State<SessionPage> {
                 ..click();
               html.Url.revokeObjectUrl(url);
               if (ctx.mounted) Navigator.pop(ctx);
-              _toast('백업 파일 다운로드 시작됨');
+              _toast('백업 저장 시작');
             },
-            child: const Text('파일로 백업'),
+            child: const Text('백업 다운로드'),
           ),
           TextButton(
             onPressed: () {
@@ -427,15 +524,15 @@ class _SessionPageState extends State<SessionPage> {
                       session = widget.store.today();
                       if (ctx.mounted) Navigator.pop(ctx);
                       if (mounted) setState(() {});
-                      _toast('복원 완료되었습니다.');
+                      _toast('복원 완료!');
                     } catch (_) {
-                      _toast('파일 형식 오류');
+                      _toast('잘못된 백업 파일 형식');
                     }
                   });
                 }
               });
             },
-            child: const Text('파일에서 복원'),
+            child: const Text('파일로 복원'),
           ),
         ],
       ),
@@ -445,145 +542,121 @@ class _SessionPageState extends State<SessionPage> {
   Future<void> _loadRoutine() async {
     final routines = widget.store.routines;
     if (routines.isEmpty) {
-      _toast('루틴이 없습니다. 메뉴의 루틴에서 만드세요');
+      _toast('등록된 루틴이 없습니다. 메뉴의 루틴에서 먼저 작성해주세요.');
       return;
     }
     final r = await showDialog<Routine>(
       context: context,
       builder: (ctx) => SimpleDialog(
-        title: const Text('루틴 선택'),
+        title: const Text('루틴 불러오기'),
         children: [
           for (final x in routines)
             SimpleDialogOption(
               onPressed: () => Navigator.pop(ctx, x),
-              child: Text('${x.name} (${x.exercises.length})'),
+              child: Text('${x.name} (${x.exercises.length}개 종목)'),
             ),
         ],
       ),
     );
     if (r == null) return;
-    var replace = false;
-    if (session.exercises.isNotEmpty) {
-      final choice = await showDialog<String>(
-        context: context,
-        builder: (ctx) => SimpleDialog(
-          title: Text('${r.name} 불러오기'),
-          children: [
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, 'replace'),
-              child: const Text('교체 (현재 운동 기록 삭제)'),
-            ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, 'add'),
-              child: const Text('현재 운동에 추가'),
-            ),
-          ],
-        ),
-      );
-      if (choice == null) return;
-      replace = choice == 'replace';
-    }
     setState(() {
-      if (replace) {
-        session.exercises.clear();
-        session.routine = null;
-      }
       for (final name in r.exercises) {
         if (session.exercises.any((e) => e.name == name)) continue;
         final prev = widget.store.previous(name, session.date);
         session.exercises
             .add(Exercise(name, prev.isEmpty ? [SetEntry()] : prev));
       }
-      final cur = session.routine;
-      if (cur == null) {
-        session.routine = r.name;
-      } else if (!cur.split(' + ').contains(r.name)) {
-        session.routine = '$cur + ${r.name}';
-      }
+      session.routine = r.name;
     });
     _save();
   }
 
   Future<void> _addExercise() async {
     final c = TextEditingController();
+    String muscle = '가슴';
     final pastNames = widget.store.getAllExerciseNames();
-    
+
     final name = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('운동 종목'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(controller: c, autofocus: true, decoration: const InputDecoration(hintText: '종목명 입력')),
-            if (pastNames.isNotEmpty) ...[
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setSt) => AlertDialog(
+          title: const Text('운동 종목 추가'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                  controller: c,
+                  autofocus: true,
+                  decoration: const InputDecoration(hintText: '종목명 입력')),
               const SizedBox(height: 12),
-              const Text('이전 종목 선택:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: pastNames
-                    .take(10)
-                    .map((n) => ActionChip(
-                          label: Text(n),
-                          onPressed: () => Navigator.pop(ctx, n),
-                        ))
+              DropdownButton<String>(
+                value: muscle,
+                isExpanded: true,
+                items: ['가슴', '등', '어깨', '하체', '이두', '삼두', '복근']
+                    .map((m) => DropdownMenuItem(value: m, child: Text('타겟 부위: $m')))
                     .toList(),
-              )
-            ]
+                onChanged: (v) => setSt(() => muscle = v!),
+              ),
+              if (pastNames.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('이전 기록 종목 선택:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                Wrap(
+                  spacing: 4,
+                  children: pastNames
+                      .take(6)
+                      .map((n) => ActionChip(
+                            label: Text(n),
+                            onPressed: () => Navigator.pop(ctx, n),
+                          ))
+                      .toList(),
+                )
+              ]
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, c.text.trim()),
+                child: const Text('추가')),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, c.text.trim()),
-              child: const Text('추가')),
-        ],
       ),
     );
+
     if (name == null || name.isEmpty) return;
     final prev = widget.store.previous(name, session.date);
-    setState(() =>
-        session.exercises.add(Exercise(name, prev.isEmpty ? [SetEntry()] : prev)));
-    _save();
-  }
-
-  void _bump(Exercise e, double d) {
-    setState(() {
-      for (final s in e.sets) {
-        final w = s.weight + d;
-        s.weight = w < 0 ? 0.0 : w;
-      }
-      e.rev++;
-    });
+    setState(() => session.exercises.add(Exercise(
+          name,
+          prev.isEmpty ? [SetEntry()] : prev,
+          targetMuscle: muscle,
+        )));
     _save();
   }
 
   Widget _card(Exercise e) {
-    final prev = widget.store.previous(e.name, session.date);
     final pr = widget.store.pr(e.name);
-    final info = [
-      if (prev.isNotEmpty)
-        '지난번: ${prev.map((s) => '${_fmt(s.weight)}kg×${s.reps}').join(', ')}',
-      if (pr > 0) 'PR: ${_fmt(pr)}kg',
-      '볼륨: ${_fmt(e.volume)}kg',
-    ].join(' · ');
+    final rec = widget.store.recommendNext(e.name, session.date);
+
     return Card(
       key: ObjectKey(e),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              Expanded(
-                  child: Text(e.name,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(color: Colors.cyanAccent))),
+              Text(e.name,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(color: Colors.cyanAccent)),
+              const SizedBox(width: 8),
+              Chip(
+                label: Text(e.targetMuscle, style: const TextStyle(fontSize: 10)),
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+              ),
+              const Spacer(),
               IconButton(
                 icon: const Icon(Icons.delete, size: 20),
                 onPressed: () {
@@ -592,72 +665,112 @@ class _SessionPageState extends State<SessionPage> {
                 },
               ),
             ]),
-            Text(info, style: const TextStyle(color: Colors.grey, fontSize: 13)),
-            const SizedBox(height: 6),
-            for (final s in e.sets)
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                margin: const EdgeInsets.symmetric(vertical: 2),
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                decoration: BoxDecoration(
-                  color: s.done ? Colors.cyanAccent.withOpacity(0.08) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(key: ObjectKey(s), children: [
-                  Expanded(
-                    child: TextFormField(
-                      key: ValueKey('w${e.rev}'),
-                      initialValue: s.weight == 0 ? '' : _fmt(s.weight),
-                      decoration: const InputDecoration(labelText: 'kg'),
-                      keyboardType: TextInputType.number,
-                      onChanged: (v) {
-                        s.weight = double.tryParse(v) ?? 0;
-                        _save();
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextFormField(
-                      initialValue: s.reps == 0 ? '' : '${s.reps}',
-                      decoration: const InputDecoration(labelText: '회'),
-                      keyboardType: TextInputType.number,
-                      onChanged: (v) {
-                        s.reps = int.tryParse(v) ?? 0;
-                        _save();
-                      },
-                    ),
-                  ),
-                  Checkbox(
-                    value: s.done,
-                    activeColor: Colors.cyanAccent,
-                    checkColor: Colors.black,
-                    onChanged: (v) {
-                      setState(() => s.done = v ?? false);
-                      _save();
-                      if (v == true && isToday) _startRest(widget.store.defaultRestSeconds);
-                    },
-                  ),
-                ]),
+            Text('PR: ${_fmt(pr)}kg · 볼륨: ${_fmt(e.volume)}kg',
+                style: const TextStyle(color: Colors.grey, fontSize: 12)),
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 6), // EdgeInsets.vertical 오타 수정
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.cyanAccent.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(6),
               ),
-            Wrap(children: [
-              TextButton.icon(
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('세트 추가'),
-                onPressed: () {
-                  final last = e.sets.isEmpty ? null : e.sets.last;
-                  setState(() => e.sets.add(SetEntry(
-                      weight: last?.weight ?? 0, reps: last?.reps ?? 0)));
-                  _save();
-                },
+              child: Row(
+                children: [
+                  const Icon(Icons.auto_awesome, size: 16, color: Colors.cyanAccent),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(rec,
+                        style: const TextStyle(fontSize: 12, color: Colors.cyanAccent)),
+                  ),
+                ],
               ),
-              TextButton(
-                  onPressed: () => _bump(e, -2.5), child: const Text('전체 −2.5kg')),
-              TextButton(
-                  onPressed: () => _bump(e, 2.5), child: const Text('전체 +2.5kg')),
-            ]),
+            ),
+            for (var idx = 0; idx < e.sets.length; idx++) ...[
+              _setRow(e, e.sets[idx], idx),
+            ],
+            TextButton.icon(
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('세트 추가'),
+              onPressed: () {
+                final last = e.sets.isEmpty ? null : e.sets.last;
+                setState(() => e.sets.add(SetEntry(
+                      weight: last?.weight ?? 0,
+                      reps: last?.reps ?? 0,
+                      type: SetType.MAIN,
+                    )));
+                _save();
+              },
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _setRow(Exercise e, SetEntry s, int idx) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          DropdownButton<SetType>(
+            value: s.type,
+            underline: const SizedBox(),
+            items: SetType.values
+                .map((t) => DropdownMenuItem(value: t, child: Text(t.label, style: const TextStyle(fontSize: 12))))
+                .toList(),
+            onChanged: (v) {
+              setState(() => s.type = v!);
+              _save();
+            },
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: TextFormField(
+              initialValue: s.weight == 0 ? '' : _fmt(s.weight),
+              decoration: const InputDecoration(labelText: 'kg', isDense: true),
+              keyboardType: TextInputType.number,
+              onChanged: (v) {
+                s.weight = double.tryParse(v) ?? 0;
+                _save();
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextFormField(
+              initialValue: s.reps == 0 ? '' : '${s.reps}',
+              decoration: const InputDecoration(labelText: '회', isDense: true),
+              keyboardType: TextInputType.number,
+              onChanged: (v) {
+                s.reps = int.tryParse(v) ?? 0;
+                _save();
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          DropdownButton<double?>(
+            value: s.rpe,
+            hint: const Text('RPE', style: TextStyle(fontSize: 11)),
+            underline: const SizedBox(),
+            items: [6.0, 7.0, 8.0, 8.5, 9.0, 9.5, 10.0]
+                .map((r) => DropdownMenuItem(value: r, child: Text('@$r', style: const TextStyle(fontSize: 11))))
+                .toList(),
+            onChanged: (v) {
+              setState(() => s.rpe = v);
+              _save();
+            },
+          ),
+          Checkbox(
+            value: s.done,
+            activeColor: Colors.cyanAccent,
+            checkColor: Colors.black,
+            onChanged: (v) {
+              setState(() => s.done = v ?? false);
+              _save();
+              if (v == true && isToday) _startRest(widget.store.defaultRestSeconds);
+            },
+          ),
+        ],
       ),
     );
   }
@@ -707,10 +820,11 @@ class _SessionPageState extends State<SessionPage> {
                             color: Colors.cyanAccent)),
                   ),
                 ),
-                _nav('달력', Icons.calendar_month, () => CalendarPage(store: st)),
-                _nav('루틴', Icons.folder, () => RoutinePage(store: st)),
-                _nav('기록', Icons.history, () => HistoryPage(store: st)),
-                _nav('통계', Icons.bar_chart, () => StatsPage(store: st)),
+                _nav('달력 (출석/완료)', Icons.calendar_month, () => CalendarPage(store: st)),
+                _nav('루틴 관리', Icons.folder, () => RoutinePage(store: st)),
+                _nav('신체 기록 (체중/근육량)', Icons.monitor_weight, () => BodyPage(store: st)),
+                _nav('운동 기록 목록', Icons.history, () => HistoryPage(store: st)),
+                _nav('통계 & 부위별 볼륨', Icons.bar_chart, () => StatsPage(store: st)),
                 ListTile(
                   leading: const Icon(Icons.save_alt, color: Colors.cyanAccent),
                   title: const Text('백업 / 복원'),
@@ -731,14 +845,6 @@ class _SessionPageState extends State<SessionPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
         children: [
-          if (session.routine != null)
-            Text('루틴: ${session.routine}',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(color: Colors.cyanAccent)),
-          Text('총 볼륨 ${_fmt(session.volume)}kg (완료 세트 기준)',
-              style: const TextStyle(color: Colors.grey)),
           Row(
             children: [
               TextButton.icon(
@@ -827,10 +933,8 @@ class _CalendarPageState extends State<CalendarPage> {
                 final date = DateTime(_focusedMonth.year, _focusedMonth.month, day);
                 final dKey = dateKey(date);
 
-                // 미래 날짜 여부
                 final isFuture = date.isAfter(DateTime(now.year, now.month, now.day));
                 
-                // 세션 및 완료 여부 조회
                 final session = widget.store.sessions.firstWhere(
                   (s) => s.date == dKey,
                   orElse: () => Session(dKey, []),
@@ -839,9 +943,9 @@ class _CalendarPageState extends State<CalendarPage> {
                 Color bgColor = Colors.transparent;
                 if (!isFuture) {
                   if (session.isFinished) {
-                    bgColor = Colors.green.withOpacity(0.4); // 운동 완료: 초록색
+                    bgColor = Colors.green.withOpacity(0.4); // 완료: 초록
                   } else if (dKey != todayStr || session.exercises.isNotEmpty) {
-                    bgColor = Colors.red.withOpacity(0.3); // 과거 미완료/휴식일: 빨간색
+                    bgColor = Colors.red.withOpacity(0.3); // 미완료: 빨강
                   }
                 }
 
@@ -885,10 +989,86 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 }
 
+// ---------- 신체 변화 기록 화면 ----------
+class BodyPage extends StatefulWidget {
+  final Store store;
+  const BodyPage({super.key, required this.store});
+
+  @override
+  State<BodyPage> createState() => _BodyPageState();
+}
+
+class _BodyPageState extends State<BodyPage> {
+  final _wCtrl = TextEditingController();
+  final _mCtrl = TextEditingController();
+  final _fCtrl = TextEditingController();
+
+  void _addRecord() {
+    final w = double.tryParse(_wCtrl.text);
+    if (w == null) return;
+    final m = double.tryParse(_mCtrl.text);
+    final f = double.tryParse(_fCtrl.text);
+
+    setState(() {
+      widget.store.bodyRecords.add(BodyRecord(dateKey(DateTime.now()), w, m, f));
+    });
+    widget.store.save();
+    _wCtrl.clear();
+    _mCtrl.clear();
+    _fCtrl.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final records = widget.store.bodyRecords.reversed.toList();
+    final weights = widget.store.bodyRecords.map((r) => r.weight).toList();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('신체 변화 기록')),
+      body: ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  const Text('오늘 신체 측정값 입력', style: TextStyle(color: Colors.cyanAccent)),
+                  Row(
+                    children: [
+                      Expanded(child: TextField(controller: _wCtrl, decoration: const InputDecoration(labelText: '체중(kg)'))),
+                      const SizedBox(width: 8),
+                      Expanded(child: TextField(controller: _mCtrl, decoration: const InputDecoration(labelText: '골격근량(kg)'))),
+                      const SizedBox(width: 8),
+                      Expanded(child: TextField(controller: _fCtrl, decoration: const InputDecoration(labelText: '체지방률(%)'))),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton(onPressed: _addRecord, child: const Text('기록 추가')),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text('체중 변화 추이', style: TextStyle(color: Colors.cyanAccent)),
+          lineChart(weights),
+          const Divider(),
+          for (final r in records)
+            ListTile(
+              title: Text('${r.date}: ${_fmt(r.weight)}kg'),
+              subtitle: Text('골격근량: ${r.muscle != null ? _fmt(r.muscle!) : "-"}kg · 체지방률: ${r.fat != null ? _fmt(r.fat!) : "-"}%'),
+            )
+        ],
+      ),
+    );
+  }
+}
+
 // ---------- 루틴 관리 ----------
 class RoutinePage extends StatefulWidget {
   final Store store;
   const RoutinePage({super.key, required this.store});
+
   @override
   State<RoutinePage> createState() => _RoutinePageState();
 }
@@ -919,87 +1099,6 @@ class _RoutinePageState extends State<RoutinePage> {
     _save();
   }
 
-  Future<void> _rename(Routine r) async {
-    final n = await _ask('루틴 이름 변경', r.name);
-    if (n == null || n.isEmpty) return;
-    setState(() => r.name = n);
-    _save();
-  }
-
-  Future<void> _addExercise(Routine r) async {
-    final pastNames = widget.store.getAllExerciseNames();
-    final c = TextEditingController();
-    
-    final n = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('운동 종목'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(controller: c, autofocus: true, decoration: const InputDecoration(hintText: '종목명 입력')),
-            if (pastNames.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Text('이전 종목 선택:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: pastNames
-                    .take(10)
-                    .map((name) => ActionChip(
-                          label: Text(name),
-                          onPressed: () => Navigator.pop(ctx, name),
-                        ))
-                    .toList(),
-              )
-            ]
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, c.text.trim()),
-              child: const Text('추가')),
-        ],
-      ),
-    );
-    if (n == null || n.isEmpty || r.exercises.contains(n)) return;
-    setState(() => r.exercises.add(n));
-    _save();
-  }
-
-  void _move(Routine r, int i, int d) {
-    final j = i + d;
-    if (j < 0 || j >= r.exercises.length) return;
-    setState(() {
-      final t = r.exercises.removeAt(i);
-      r.exercises.insert(j, t);
-    });
-    _save();
-  }
-
-  Future<void> _deleteRoutine(Routine r) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('루틴 삭제'),
-        content: Text('"${r.name}" 루틴을 삭제할까요? (과거 기록은 유지됩니다)'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('취소')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('삭제')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    setState(() => widget.store.routines.remove(r));
-    _save();
-  }
-
   @override
   Widget build(BuildContext context) {
     final routines = widget.store.routines;
@@ -1011,48 +1110,24 @@ class _RoutinePageState extends State<RoutinePage> {
           onPressed: _addRoutine,
           child: const Icon(Icons.add)),
       body: routines.isEmpty
-          ? const Center(child: Text('루틴 없음. + 버튼으로 추가'))
+          ? const Center(child: Text('등록된 루틴이 없습니다.'))
           : ListView(children: [
               for (final r in routines)
                 ExpansionTile(
-                  key: ObjectKey(r),
                   title: Text(r.name, style: const TextStyle(color: Colors.cyanAccent)),
-                  subtitle: Text('${r.exercises.length}개 운동'),
+                  subtitle: Text('${r.exercises.length}개 종목'),
                   children: [
                     for (var i = 0; i < r.exercises.length; i++)
                       ListTile(
-                        key: ValueKey('${r.name}-${r.exercises[i]}'),
                         title: Text(r.exercises[i]),
-                        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                          IconButton(
-                              icon: const Icon(Icons.arrow_upward),
-                              onPressed: () => _move(r, i, -1)),
-                          IconButton(
-                              icon: const Icon(Icons.arrow_downward),
-                              onPressed: () => _move(r, i, 1)),
-                          IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: () {
-                              setState(() => r.exercises.removeAt(i));
-                              _save();
-                            },
-                          ),
-                        ]),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () {
+                            setState(() => r.exercises.removeAt(i));
+                            _save();
+                          },
+                        ),
                       ),
-                    Wrap(children: [
-                      TextButton.icon(
-                          icon: const Icon(Icons.add),
-                          label: const Text('운동 추가'),
-                          onPressed: () => _addExercise(r)),
-                      TextButton.icon(
-                          icon: const Icon(Icons.edit),
-                          label: const Text('이름 변경'),
-                          onPressed: () => _rename(r)),
-                      TextButton.icon(
-                          icon: const Icon(Icons.delete),
-                          label: const Text('루틴 삭제'),
-                          onPressed: () => _deleteRoutine(r)),
-                    ]),
                   ],
                 ),
             ]),
@@ -1064,74 +1139,33 @@ class _RoutinePageState extends State<RoutinePage> {
 class HistoryPage extends StatefulWidget {
   final Store store;
   const HistoryPage({super.key, required this.store});
+
   @override
   State<HistoryPage> createState() => _HistoryPageState();
 }
 
 class _HistoryPageState extends State<HistoryPage> {
-  Future<void> _delete(Session s) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('${s.date} 기록 삭제'),
-        content: const Text('삭제하면 복구할 수 없습니다.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('취소')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('삭제')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    widget.store.sessions.remove(s);
-    await widget.store.save();
-    if (mounted) setState(() {});
-  }
-
   @override
   Widget build(BuildContext context) {
-    final today = dateKey(DateTime.now());
-    final list = widget.store.sessions
-        .where((s) => s.date != today && s.exercises.isNotEmpty)
-        .toList()
-        .reversed
-        .toList();
+    final list = widget.store.sessions.reversed.toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('기록')),
-      body: list.isEmpty
-          ? const Center(child: Text('기록 없음'))
-          : ListView(children: [
-              for (final s in list)
-                ListTile(
-                  key: ObjectKey(s),
-                  title: Row(
-                    children: [
-                      Text(s.routine == null ? s.date : '${s.date} · ${s.routine}',
-                          style: const TextStyle(color: Colors.cyanAccent)),
-                      if (s.isFinished) ...[
-                        const SizedBox(width: 8),
-                        const Icon(Icons.check_circle, size: 16, color: Colors.green),
-                      ]
-                    ],
-                  ),
-                  subtitle: Text(
-                      '${s.exercises.map((e) => e.name).join(', ')} · 볼륨 ${_fmt(s.volume)}kg'),
-                  onTap: () async {
-                    await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => SessionPage(
-                                store: widget.store, session: s)));
-                    if (mounted) setState(() {});
-                  },
-                  trailing: IconButton(
-                      icon: const Icon(Icons.delete),
-                      onPressed: () => _delete(s)),
-                ),
-            ]),
+      appBar: AppBar(title: const Text('운동 기록 목록')),
+      body: ListView(children: [
+        for (final s in list)
+          ListTile(
+            title: Text('${s.date} ${s.routine ?? ''}'),
+            subtitle: Text('볼륨 ${_fmt(s.volume)}kg'),
+            trailing: Icon(s.isFinished ? Icons.check_circle : Icons.hourglass_bottom,
+                color: s.isFinished ? Colors.green : Colors.grey),
+            onTap: () async {
+              await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => SessionPage(store: widget.store, session: s)));
+              if (mounted) setState(() {});
+            },
+          )
+      ]),
     );
   }
 }
@@ -1143,44 +1177,28 @@ class StatsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cutoff = dateKey(DateTime.now().subtract(const Duration(days: 6)));
-    final recent = store.sessions
-        .where((s) => s.date.compareTo(cutoff) >= 0 && s.hasDone)
-        .toList();
-    final weekVol = recent.fold(0.0, (a, s) => a + s.volume);
-    final withVol = store.sessions.where((s) => s.volume > 0).toList();
-    final trend = withVol.length > 20
-        ? withVol.sublist(withVol.length - 20)
-        : withVol;
-    final names = <String>{
-      for (final s in store.sessions)
-        for (final e in s.exercises) e.name,
-    };
-    final prs = [
-      for (final n in names)
-        if (store.pr(n) > 0) MapEntry(n, store.pr(n)),
-    ]..sort((a, b) => b.value.compareTo(a.value));
+    final Map<String, int> muscleSets = {};
+    for (final s in store.sessions) {
+      for (final e in s.exercises) {
+        final count = e.sets.where((x) => x.done && x.type == SetType.MAIN).length;
+        muscleSets[e.targetMuscle] = (muscleSets[e.targetMuscle] ?? 0) + count;
+      }
+    }
+
     return Scaffold(
-      appBar: AppBar(title: const Text('통계')),
-      body: ListView(padding: const EdgeInsets.all(12), children: [
-        Text('최근 7일 운동 횟수: ${recent.length}회'),
-        Text('최근 7일 총 볼륨: ${_fmt(weekVol)}kg'),
-        const SizedBox(height: 12),
-        Text('세션별 볼륨 추세 (최근 ${trend.length}회)',
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(color: Colors.cyanAccent)),
-        lineChart([for (final s in trend) s.volume]),
-        const SizedBox(height: 12),
-        Text('종목별 PR (완료 세트 최대 중량)',
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(color: Colors.cyanAccent)),
-        if (prs.isEmpty) const Text('기록 없음'),
-        for (final p in prs) Text('${p.key}: ${_fmt(p.value)}kg'),
-      ]),
+      appBar: AppBar(title: const Text('통계 & 부위별 볼륨')),
+      body: ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          const Text('부위별 주간 완료 작업 세트 수', style: TextStyle(color: Colors.cyanAccent)),
+          const SizedBox(height: 8),
+          for (final entry in muscleSets.entries)
+            ListTile(
+              title: Text(entry.key),
+              trailing: Text('${entry.value} 세트', style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
+        ],
+      ),
     );
   }
 }
