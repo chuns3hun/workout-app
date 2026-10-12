@@ -320,7 +320,6 @@ class Store {
     }
   }
 
-  // 종목별 1RM 기록 추세 추출
   List<MapEntry<String, double>> get1RMHistory(String exerciseName) {
     final List<MapEntry<String, double>> history = [];
     for (final s in sessions) {
@@ -1123,6 +1122,9 @@ class _BodyPageState extends State<BodyPage> {
   final _mCtrl = TextEditingController();
   final _fCtrl = TextEditingController();
 
+  // 0: 체중, 1: 골격근량, 2: 체지방률
+  int _selectedMetric = 0;
+
   void _addRecord() {
     final w = double.tryParse(_wCtrl.text);
     if (w == null) return;
@@ -1141,7 +1143,30 @@ class _BodyPageState extends State<BodyPage> {
   @override
   Widget build(BuildContext context) {
     final records = widget.store.bodyRecords.reversed.toList();
-    final weights = widget.store.bodyRecords.map((r) => r.weight).toList();
+    
+    List<double> chartData = [];
+    String metricLabel = '';
+    String unit = '';
+
+    if (_selectedMetric == 0) {
+      chartData = widget.store.bodyRecords.map((r) => r.weight).toList();
+      metricLabel = '체중';
+      unit = 'kg';
+    } else if (_selectedMetric == 1) {
+      chartData = widget.store.bodyRecords
+          .where((r) => r.muscle != null)
+          .map((r) => r.muscle!)
+          .toList();
+      metricLabel = '골격근량';
+      unit = 'kg';
+    } else {
+      chartData = widget.store.bodyRecords
+          .where((r) => r.fat != null)
+          .map((r) => r.fat!)
+          .toList();
+      metricLabel = '체지방률';
+      unit = '%';
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('신체 변화 기록')),
@@ -1156,11 +1181,11 @@ class _BodyPageState extends State<BodyPage> {
                   const Text('오늘 신체 측정값 입력', style: TextStyle(color: Colors.cyanAccent)),
                   Row(
                     children: [
-                      Expanded(child: TextField(controller: _wCtrl, decoration: const InputDecoration(labelText: '체중(kg)'))),
+                      Expanded(child: TextField(controller: _wCtrl, decoration: const InputDecoration(labelText: '체중(kg)'), keyboardType: TextInputType.number)),
                       const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: _mCtrl, decoration: const InputDecoration(labelText: '골격근량(kg)'))),
+                      Expanded(child: TextField(controller: _mCtrl, decoration: const InputDecoration(labelText: '골격근량(kg)'), keyboardType: TextInputType.number)),
                       const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: _fCtrl, decoration: const InputDecoration(labelText: '체지방률(%)'))),
+                      Expanded(child: TextField(controller: _fCtrl, decoration: const InputDecoration(labelText: '체지방률(%)'), keyboardType: TextInputType.number)),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -1169,9 +1194,38 @@ class _BodyPageState extends State<BodyPage> {
               ),
             ),
           ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ChoiceChip(
+                label: const Text('체중'),
+                selected: _selectedMetric == 0,
+                onSelected: (selected) {
+                  if (selected) setState(() => _selectedMetric = 0);
+                },
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('골격근량'),
+                selected: _selectedMetric == 1,
+                onSelected: (selected) {
+                  if (selected) setState(() => _selectedMetric = 1);
+                },
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('체지방률'),
+                selected: _selectedMetric == 2,
+                onSelected: (selected) {
+                  if (selected) setState(() => _selectedMetric = 2);
+                },
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
-          const Text('체중 변화 추이', style: TextStyle(color: Colors.cyanAccent)),
-          lineChart(weights),
+          Text('$metricLabel 변화 추이 ($unit)', style: const TextStyle(color: Colors.cyanAccent)),
+          lineChart(chartData),
           const Divider(),
           for (final r in records)
             ListTile(
