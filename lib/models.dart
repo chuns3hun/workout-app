@@ -56,12 +56,12 @@ class Exercise {
   int minReps;
   int maxReps;
   bool isCollapsed;
-  int rev = 0; // 입력창 상태 재생성용 (저장 안 함)
+  int rev = 0;
 
   Exercise(
     this.name,
     this.sets, {
-    this.targetMuscle = '기타',
+    this.targetMuscle = '가슴',
     this.memo = '',
     this.supersetGroup = 'NONE',
     this.minReps = 8,
@@ -179,5 +179,77 @@ class BodyRecord {
         (j['w'] as num).toDouble(),
         (j['m'] as num?)?.toDouble(),
         (j['f'] as num?)?.toDouble(),
+      );
+}
+
+// ---------- 식단 모델 ----------
+class FoodItem {
+  String name;
+  double calories;
+  double carbs;
+  double protein;
+  double fat;
+
+  FoodItem({
+    required this.name,
+    required this.calories,
+    required this.carbs,
+    required this.protein,
+    required this.fat,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'n': name,
+        'cal': calories,
+        'c': carbs,
+        'p': protein,
+        'f': fat,
+      };
+
+  factory FoodItem.fromJson(Map<String, dynamic> j) => FoodItem(
+        name: j['n'] as String,
+        calories: (j['cal'] as num).toDouble(),
+        carbs: (j['c'] as num).toDouble(),
+        protein: (j['p'] as num).toDouble(),
+        fat: (j['f'] as num).toDouble(),
+      );
+}
+
+class MealEntry {
+  String id;
+  String date;
+  String mealType;
+  String? imageBase64;
+  List<FoodItem> foods;
+
+  MealEntry({
+    required this.id,
+    required this.date,
+    required this.mealType,
+    this.imageBase64,
+    required this.foods,
+  });
+
+  double get totalCalories => foods.fold(0.0, (a, b) => a + b.calories);
+  double get totalCarbs => foods.fold(0.0, (a, b) => a + b.carbs);
+  double get totalProtein => foods.fold(0.0, (a, b) => a + b.protein);
+  double get totalFat => foods.fold(0.0, (a, b) => a + b.fat);
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'd': date,
+        'mt': mealType,
+        'img': imageBase64,
+        'f': foods.map((e) => e.toJson()).toList(),
+      };
+
+  factory MealEntry.fromJson(Map<String, dynamic> j) => MealEntry(
+        id: j['id'] as String,
+        date: j['d'] as String,
+        mealType: j['mt'] as String? ?? '점심',
+        imageBase64: j['img'] as String?,
+        foods: (j['f'] as List)
+            .map((e) => FoodItem.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 }

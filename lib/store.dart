@@ -1,41 +1,101 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 import 'utils.dart';
 
-/// 앱 전체 데이터 + 저장/불러오기.
-/// save()는 250ms 디바운스 후 저장하고 리스너(달력·통계 등)에 알림.
+// ⚠️ 본인의 Gemini API 키 입력
+const String geminiApiKey = 'AQ.Ab8RN6LGD5Dwmlsq_qBKjp2AEX8a7F_Q2pTbeo3iYmfVX3ySYw';
+
+class FoodAnalyzer {
+  static Future<List<FoodItem>> analyzeMealImage(String base64Image) async {
+    if (geminiApiKey == 'YOUR_GEMINI_API_KEY' || geminiApiKey.isEmpty) {
+      throw Exception('Gemini API 키가 설정되지 않았습니다.');
+    }
+
+    final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$geminiApiKey');
+
+    const promptText = '''
+너는 영양학 전문가야. 전달된 식단/학식 사진을 분석해서 포함된 음식 항목별 영양성분을 정밀하게 추정해줘.
+반드시 아래와 같은 순수한 JSON 배열 형식으로만 응답해줘. 다른 서론이나 설명은 절대 붙이지 마:
+[
+  {
+    "name": "음식명",
+    "calories": 칼로리(kcal숫자만),
+    "carbs": 탄수화물(g숫자만),
+    "protein": 단백질(g숫자만),
+    "fat": 지방(g숫자만)
+  }
+]
+''';
+
+    final body = jsonEncode({
+      "contents": [
+        {
+          "parts": [
+            {"text": promptText},
+            {
+              "inline_data": {
+                "mime_type": "image/jpeg",
+                "data": base64Image
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: body,
+    );
+
+    if (response.statusCode == 200) {
+      final resJson = jsonDecode(response.body);
+      final rawText = resJson['candidates']?[0]?['content']?['parts']?[0]?['text'] as String?;
+      if (rawText == null) throw Exception('분석 결과를 가져오지 못했습니다.');
+
+      final cleanJsonStr = rawText
+          .replaceAll('```json', '')
+          .replaceAll('```', '')
+          .trim();
+
+      final List decoded = jsonDecode(cleanJsonStr);
+      return decoded.map((e) => FoodItem.fromJson(e as Map<String, dynamic>)).toList();
+    } else {
+      throw Exception('API 호출 실패: ${response.statusCode}');
+    }
+  }
+}
+
 class Store extends ChangeNotifier {
   final List<Session> sessions = [];
   final List<Routine> routines = [];
   final List<BodyRecord> bodyRecords = [];
+  final List<MealEntry> meals = [];
   int defaultRestSeconds = 90;
   String? lastBackup;
 
-  static const _keys = ['sessions', 'routines', 'body_records', 'rest_sec'];
-  Timer? _debounce;
+  static const _keys = ['sessions', 'routines', 'body_records', 'meals', 'rest_sec', 'last_backup'];
 
   static List<T> _l<T>(dynamic raw, T Function(Map<String, dynamic>) f) =>
       ((raw as List?) ?? []).map((e) => f(e as Map<String, dynamic>)).toList();
 
-  // 종목이 없는 빈 세션은 저장하지 않음
   Map<String, dynamic> _toMap() => {
-        'sessions': sessions
-            .where((s) => s.exercises.isNotEmpty)
-            .map((s) => s.toJson())
-            .toList(),
+        'sessions': sessions.map((s) => s.toJson()).toList(),
         'routines': routines.map((r) => r.toJson()).toList(),
         'body_records': bodyRecords.map((b) => b.toJson()).toList(),
+        'meals': meals.map((m) => m.toJson()).toList(),
         'rest_sec': defaultRestSeconds,
+        'last_backup': lastBackup,
       };
 
   void _apply(Map<String, dynamic> m) {
     if (m['sessions'] != null) {
       final l = _l(m['sessions'], Session.fromJson)
-          .where((s) => s.exercises.isNotEmpty)
-          .toList()
         ..sort((a, b) => a.date.compareTo(b.date));
       sessions
         ..clear()
@@ -52,9 +112,19 @@ class Store extends ChangeNotifier {
         ..addAll(_l(m['body_records'], BodyRecord.fromJson)
           ..sort((a, b) => a.date.compareTo(b.date)));
     }
+    if (m['meals'] != null) {
+      meals
+        ..clear()
+        ..addAll(_l(m['meals'], MealEntry.fromJson)
+          ..sort((a, b) => a.date.compareTo(b.date)));
+    }
     if (m['rest_sec'] != null) {
       defaultRestSeconds = m['rest_sec'] as int? ?? 90;
     }
+    if (m['last_backup'] != null) {
+      lastBackup = m['last_backup'] as String?;
+    }
+    notifyListeners();
   }
 
   Future<void> load() async {
@@ -65,20 +135,9 @@ class Store extends ChangeNotifier {
       if (s != null) m[k] = jsonDecode(s);
     }
     _apply(m);
-    lastBackup = p.getString('last_backup');
   }
 
-  void save() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 250), _persist);
-  }
-
-  Future<void> saveNow() {
-    _debounce?.cancel();
-    return _persist();
-  }
-
-  Future<void> _persist() async {
+  Future<void> save() async {
     final p = await SharedPreferences.getInstance();
     final m = _toMap();
     for (final k in _keys) {
@@ -87,41 +146,35 @@ class Store extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setRestSeconds(int v) {
-    defaultRestSeconds = v.clamp(10, 900).toInt();
-    save();
-  }
-
-  Future<void> markBackup() async {
-    lastBackup = dateKey(DateTime.now());
-    final p = await SharedPreferences.getInstance();
-    await p.setString('last_backup', lastBackup!);
-    notifyListeners();
+  bool get needsBackup {
+    if (lastBackup == null) return true;
+    final b = DateTime.tryParse(lastBackup!);
+    if (b == null) return true;
+    return DateTime.now().difference(b).inDays >= 7;
   }
 
   int? daysSinceBackup() {
     if (lastBackup == null) return null;
-    final d = DateTime.tryParse(lastBackup!);
-    if (d == null) return null;
-    final n = DateTime.now();
-    return DateTime(n.year, n.month, n.day)
-        .difference(DateTime(d.year, d.month, d.day))
-        .inDays;
+    final b = DateTime.tryParse(lastBackup!);
+    if (b == null) return null;
+    return DateTime.now().difference(b).inDays;
   }
 
-  // 기록이 3회 이상 쌓였고, 백업이 없거나 14일 이상 지났을 때
-  bool get needsBackup {
-    if (sessions.where((s) => s.exercises.isNotEmpty).length < 3) return false;
-    final d = daysSinceBackup();
-    return d == null || d >= 14;
+  Future<void> markBackup() async {
+    lastBackup = dateKey(DateTime.now());
+    await save();
+  }
+
+  Future<void> setRestSeconds(int sec) async {
+    defaultRestSeconds = sec;
+    await save();
   }
 
   String exportJson() => jsonEncode(_toMap());
 
   String exportCsv() {
     final sb = StringBuffer();
-    sb.writeln(
-        'Date,Routine,Exercise,TargetMuscle,SetType,Weight,Reps,RPE,Completed');
+    sb.writeln('Date,Routine,Exercise,TargetMuscle,SetType,Weight,Reps,RPE,Completed');
     for (final s in sessions) {
       for (final e in s.exercises) {
         for (final set in e.sets) {
@@ -135,18 +188,14 @@ class Store extends ChangeNotifier {
 
   Future<void> importJson(String raw) async {
     final d = jsonDecode(raw);
-    final map = d is List ? {'sessions': d} : d as Map<String, dynamic>;
-    if (!map.containsKey('sessions')) {
-      throw const FormatException('백업 파일 형식이 아닙니다.');
-    }
     final before = jsonDecode(jsonEncode(_toMap())) as Map<String, dynamic>;
     try {
-      _apply(map);
+      _apply(d is List ? {'sessions': d} : d as Map<String, dynamic>);
     } catch (e) {
       _apply(before);
       rethrow;
     }
-    await saveNow();
+    await save();
   }
 
   Session today() {
@@ -158,7 +207,7 @@ class Store extends ChangeNotifier {
     });
   }
 
-  List<String> getAllExerciseNames() {
+  List<String> recentExerciseNames() {
     final names = <String>{};
     for (final r in routines) names.addAll(r.exercises);
     for (final s in sessions) {
@@ -169,44 +218,12 @@ class Store extends ChangeNotifier {
     return names.toList()..sort();
   }
 
-  // 최근에 수행한 순서 → 루틴 종목 순
-  List<String> recentExerciseNames() {
-    final names = <String>[];
-    for (final s in sessions.reversed) {
-      for (final e in s.exercises) {
-        if (e.name.isNotEmpty && !names.contains(e.name)) names.add(e.name);
-      }
-    }
-    for (final r in routines) {
-      for (final n in r.exercises) {
-        if (!names.contains(n)) names.add(n);
-      }
-    }
-    return names;
-  }
-
-  Exercise? lastExercise(String name, String date) {
-    for (final s in sessions.reversed) {
-      if (s.date.compareTo(date) >= 0) continue;
-      for (final e in s.exercises) {
-        if (e.name == name) return e;
-      }
-    }
-    return null;
-  }
-
-  // 이전 기록이 있으면 부위·목표 횟수·메모를 이어받음
-  Exercise newExercise(String name, String date,
-      {String fallbackMuscle = '기타'}) {
-    final last = lastExercise(name, date);
+  Exercise newExercise(String name, String date, {String fallbackMuscle = '가슴'}) {
     final prev = previous(name, date);
     return Exercise(
       name,
       prev.isEmpty ? [SetEntry()] : prev,
-      targetMuscle: last?.targetMuscle ?? fallbackMuscle,
-      memo: last?.memo ?? '',
-      minReps: last?.minReps ?? 8,
-      maxReps: last?.maxReps ?? 12,
+      targetMuscle: fallbackMuscle,
     );
   }
 
@@ -235,9 +252,7 @@ class Store extends ChangeNotifier {
       for (final e in s.exercises) {
         if (e.name != name) continue;
         for (final x in e.sets) {
-          if (x.done && x.type != SetType.WARMUP && x.weight > m) {
-            m = x.weight;
-          }
+          if (x.done && x.weight > m) m = x.weight;
         }
       }
     }
@@ -245,8 +260,7 @@ class Store extends ChangeNotifier {
   }
 
   String recommendNext(Exercise e, String date) {
-    final prevSets =
-        previous(e.name, date).where((s) => s.type == SetType.MAIN).toList();
+    final prevSets = previous(e.name, date).where((s) => s.type == SetType.MAIN).toList();
     if (prevSets.isEmpty) return '기록 부족 (첫 수행)';
 
     final lastWeight = prevSets.first.weight;
@@ -256,10 +270,11 @@ class Store extends ChangeNotifier {
     if (lastReps >= e.maxReps && lastRpe <= 8.5) {
       return '🎯 목표 달성! ${fmt(lastWeight + 2.5)}kg 추천';
     }
+
     if (lastRpe <= 7.0) {
-      return '추천: ${fmt(lastWeight + 2.5)}kg × $lastReps회';
+      return '추천: ${fmt(lastWeight + 2.5)}kg × ${lastReps}회';
     } else if (lastRpe >= 9.5) {
-      return '추천: ${fmt(lastWeight)}kg × $lastReps회 (중량 유지)';
+      return '추천: ${fmt(lastWeight)}kg × ${lastReps}회 (중량 유지)';
     } else {
       return '추천: ${fmt(lastWeight)}kg × ${lastReps + 1}회 (+1회 도전)';
     }

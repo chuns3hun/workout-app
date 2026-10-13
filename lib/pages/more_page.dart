@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../store.dart';
 import 'body_page.dart';
 import 'data_dialog.dart';
+import 'food_page.dart';
 import 'history_page.dart';
 import 'routine_page.dart';
 
@@ -10,7 +11,7 @@ class MorePage extends StatelessWidget {
   const MorePage({super.key, required this.store});
 
   void _open(BuildContext c, Widget page) =>
-      Navigator.push(c, MaterialPageRoute(builder: (_) => page));
+    Navigator.push(c, MaterialPageRoute(builder: (_) => page));
 
   Future<void> _setRest(BuildContext context) async {
     final c = TextEditingController(text: '${store.defaultRestSeconds}');
@@ -64,6 +65,8 @@ class MorePage extends StatelessWidget {
         body: ListView(children: [
           _tile(Icons.folder_open, '루틴 관리',
               () => _open(context, RoutinePage(store: store))),
+          _tile(Icons.restaurant, '식단 기록 (Vision AI)',
+              () => _open(context, FoodPage(store: store))),
           _tile(Icons.monitor_weight_outlined, '신체 기록',
               () => _open(context, BodyPage(store: store))),
           _tile(Icons.history, '운동 목록',

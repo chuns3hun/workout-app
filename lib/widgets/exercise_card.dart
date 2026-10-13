@@ -3,7 +3,6 @@ import '../models.dart';
 import '../store.dart';
 import '../utils.dart';
 
-/// 종목 카드 1개. 데이터 변경 시 onChanged(setState + 저장)를 호출.
 class ExerciseCard extends StatelessWidget {
   final Store store;
   final Session session;
@@ -22,7 +21,6 @@ class ExerciseCard extends StatelessWidget {
     required this.onSetDone,
   });
 
-  // ---------- 동작 ----------
   void _copyPrev(BuildContext context) {
     final prev = store.previous(e.name, session.date);
     if (prev.isEmpty) {
@@ -51,7 +49,6 @@ class ExerciseCard extends StatelessWidget {
     onChanged();
   }
 
-  // 첫 작업 세트 앞에 웜업 삽입 (무게는 작업 세트의 50%, 2.5kg 단위)
   void _addWarmup() {
     final firstWork = e.sets.indexWhere((s) => s.type != SetType.WARMUP);
     final pos = firstWork == -1 ? e.sets.length : firstWork;
@@ -154,7 +151,6 @@ class ExerciseCard extends StatelessWidget {
     return '${e.sets.take(idx + 1).where((x) => x.type == SetType.MAIN).length}';
   }
 
-  // ---------- UI ----------
   @override
   Widget build(BuildContext context) {
     final pr = store.pr(e.name);
@@ -318,7 +314,6 @@ class ExerciseCard extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          // 번호를 탭하면 웜업 → 작업 → 드롭 순으로 타입 변경
           InkWell(
             borderRadius: BorderRadius.circular(14),
             onTap: () {
@@ -391,7 +386,7 @@ class ExerciseCard extends StatelessWidget {
             icon: const Icon(Icons.remove, size: 14, color: Colors.grey),
             onPressed: () {
               e.sets.removeAt(idx);
-              e.rev++; // 입력창 상태를 새로 만들어 값 불일치 방지
+              e.rev++;
               onChanged();
             },
           ),
