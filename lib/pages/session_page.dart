@@ -5,7 +5,6 @@ import '../store.dart';
 import '../utils.dart';
 import '../widgets/exercise_card.dart';
 import 'data_dialog.dart';
-import 'food_page.dart';
 
 /// 운동 기록 화면. session == null 이면 "오늘" 탭용.
 class SessionPage extends StatefulWidget {

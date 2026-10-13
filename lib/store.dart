@@ -1,85 +1,17 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 import 'utils.dart';
-
-// ⚠️ 본인의 Gemini API 키 입력
-const String geminiApiKey = 'AQ.Ab8RN6LGD5Dwmlsq_qBKjp2AEX8a7F_Q2pTbeo3iYmfVX3ySYw';
-
-class FoodAnalyzer {
-  static Future<List<FoodItem>> analyzeMealImage(String base64Image) async {
-    if (geminiApiKey == 'YOUR_GEMINI_API_KEY' || geminiApiKey.isEmpty) {
-      throw Exception('Gemini API 키가 설정되지 않았습니다.');
-    }
-
-    final url = Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$geminiApiKey');
-
-    const promptText = '''
-너는 영양학 전문가야. 전달된 식단/학식 사진을 분석해서 포함된 음식 항목별 영양성분을 정밀하게 추정해줘.
-반드시 아래와 같은 순수한 JSON 배열 형식으로만 응답해줘. 다른 서론이나 설명은 절대 붙이지 마:
-[
-  {
-    "name": "음식명",
-    "calories": 칼로리(kcal숫자만),
-    "carbs": 탄수화물(g숫자만),
-    "protein": 단백질(g숫자만),
-    "fat": 지방(g숫자만)
-  }
-]
-''';
-
-    final body = jsonEncode({
-      "contents": [
-        {
-          "parts": [
-            {"text": promptText},
-            {
-              "inline_data": {
-                "mime_type": "image/jpeg",
-                "data": base64Image
-              }
-            }
-          ]
-        }
-      ]
-    });
-
-    final response = await http.post(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: body,
-    );
-
-    if (response.statusCode == 200) {
-      final resJson = jsonDecode(response.body);
-      final rawText = resJson['candidates']?[0]?['content']?['parts']?[0]?['text'] as String?;
-      if (rawText == null) throw Exception('분석 결과를 가져오지 못했습니다.');
-
-      final cleanJsonStr = rawText
-          .replaceAll('```json', '')
-          .replaceAll('```', '')
-          .trim();
-
-      final List decoded = jsonDecode(cleanJsonStr);
-      return decoded.map((e) => FoodItem.fromJson(e as Map<String, dynamic>)).toList();
-    } else {
-      throw Exception('API 호출 실패: ${response.statusCode}');
-    }
-  }
-}
 
 class Store extends ChangeNotifier {
   final List<Session> sessions = [];
   final List<Routine> routines = [];
   final List<BodyRecord> bodyRecords = [];
-  final List<MealEntry> meals = [];
   int defaultRestSeconds = 90;
   String? lastBackup;
 
-  static const _keys = ['sessions', 'routines', 'body_records', 'meals', 'rest_sec', 'last_backup'];
+  static const _keys = ['sessions', 'routines', 'body_records', 'rest_sec', 'last_backup'];
 
   static List<T> _l<T>(dynamic raw, T Function(Map<String, dynamic>) f) =>
       ((raw as List?) ?? []).map((e) => f(e as Map<String, dynamic>)).toList();
@@ -88,7 +20,6 @@ class Store extends ChangeNotifier {
         'sessions': sessions.map((s) => s.toJson()).toList(),
         'routines': routines.map((r) => r.toJson()).toList(),
         'body_records': bodyRecords.map((b) => b.toJson()).toList(),
-        'meals': meals.map((m) => m.toJson()).toList(),
         'rest_sec': defaultRestSeconds,
         'last_backup': lastBackup,
       };
@@ -110,12 +41,6 @@ class Store extends ChangeNotifier {
       bodyRecords
         ..clear()
         ..addAll(_l(m['body_records'], BodyRecord.fromJson)
-          ..sort((a, b) => a.date.compareTo(b.date)));
-    }
-    if (m['meals'] != null) {
-      meals
-        ..clear()
-        ..addAll(_l(m['meals'], MealEntry.fromJson)
           ..sort((a, b) => a.date.compareTo(b.date)));
     }
     if (m['rest_sec'] != null) {
