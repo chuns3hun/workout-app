@@ -108,6 +108,8 @@ class Session {
   String? routine;
   bool isFinished;
   String sessionNote;
+  DateTime? startTime;
+  int durationSeconds;
 
   Session(
     this.date,
@@ -115,6 +117,8 @@ class Session {
     this.routine,
     this.isFinished = false,
     this.sessionNote = '',
+    this.startTime,
+    this.durationSeconds = 0,
   ]);
 
   double get volume => exercises.fold(0.0, (a, e) => a + e.volume);
@@ -134,6 +138,8 @@ class Session {
         'rt': routine,
         'fin': isFinished,
         'sn': sessionNote,
+        'st': startTime?.toIso8601String(),
+        'dur': durationSeconds,
       };
 
   factory Session.fromJson(Map<String, dynamic> j) => Session(
@@ -144,6 +150,8 @@ class Session {
         j['rt'] as String?,
         (j['fin'] as bool?) ?? false,
         j['sn'] as String? ?? '',
+        j['st'] != null ? DateTime.tryParse(j['st'] as String) : null,
+        (j['dur'] as int?) ?? 0,
       );
 }
 

@@ -6,6 +6,16 @@ import '../utils.dart';
 import '../widgets/exercise_card.dart';
 import 'data_dialog.dart';
 
+String fmtDuration(int sec) {
+  final h = sec ~/ 3600;
+  final m = (sec % 3600) ~/ 60;
+  final s = sec % 60;
+  if (h > 0) {
+    return '$h시간 ${m.toString().padLeft(2, '0')}분 ${s.toString().padLeft(2, '0')}초';
+  }
+  return '$m분 ${s.toString().padLeft(2, '0')}초';
+}
+
 /// 운동 기록 화면. session == null 이면 "오늘" 탭용.
 class SessionPage extends StatefulWidget {
   final Store store;
@@ -23,6 +33,7 @@ class _SessionPageState extends State<SessionPage> with WidgetsBindingObserver {
 
   Timer? _ticker;
   DateTime? _restEnd;
+  Timer? _workoutTicker;
 
   @override
   void initState() {
@@ -30,6 +41,9 @@ class _SessionPageState extends State<SessionPage> with WidgetsBindingObserver {
     session = widget.session ?? widget.store.today();
     widget.store.addListener(_onStore);
     WidgetsBinding.instance.addObserver(this);
+    if (session.startTime != null && !session.isFinished) {
+      _startWorkoutTimer();
+    }
   }
 
   @override
@@ -37,10 +51,10 @@ class _SessionPageState extends State<SessionPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     widget.store.removeListener(_onStore);
     _ticker?.cancel();
+    _workoutTicker?.cancel();
     super.dispose();
   }
 
-  // 복원·삭제로 세션 객체가 바뀐 경우 오늘 세션을 다시 연결
   void _onStore() {
     if (!mounted) return;
     setState(() {
@@ -50,7 +64,6 @@ class _SessionPageState extends State<SessionPage> with WidgetsBindingObserver {
     });
   }
 
-  // 앱을 켜 둔 채 날짜가 바뀐 경우 새 날짜 세션으로 전환
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed || !mounted) return;
@@ -64,6 +77,33 @@ class _SessionPageState extends State<SessionPage> with WidgetsBindingObserver {
   void _changed() {
     setState(() {});
     widget.store.save();
+  }
+
+  // ----- 실시간 운동 타이머 -----
+  void _startWorkoutTimer() {
+    _workoutTicker?.cancel();
+    _workoutTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && session.startTime != null && !session.isFinished) {
+        setState(() {
+          session.durationSeconds =
+              DateTime.now().difference(session.startTime!).inSeconds;
+        });
+      }
+    });
+  }
+
+  void _toggleWorkoutStart() {
+    setState(() {
+      if (session.startTime == null) {
+        session.startTime = DateTime.now();
+        _startWorkoutTimer();
+        snack(context, '🏋️ 운동을 시작합니다!');
+      } else {
+        session.startTime = null;
+        _workoutTicker?.cancel();
+      }
+    });
+    _changed();
   }
 
   // ----- 휴식 타이머 -----
@@ -112,12 +152,17 @@ class _SessionPageState extends State<SessionPage> with WidgetsBindingObserver {
 
   // ----- 동작 -----
   void _toggleFinish() {
-    session.isFinished = !session.isFinished;
+    setState(() {
+      session.isFinished = !session.isFinished;
+      if (session.isFinished) {
+        _stopRest();
+        _workoutTicker?.cancel();
+        snack(context, '🎉 운동 완료! 총 ${fmtDuration(session.durationSeconds)} 운동함');
+      } else if (session.startTime != null) {
+        _startWorkoutTimer();
+      }
+    });
     _changed();
-    if (session.isFinished) {
-      _stopRest();
-      snack(context, '🎉 운동 완료 기록됨');
-    }
   }
 
   Future<void> _loadRoutine() async {
@@ -253,6 +298,61 @@ class _SessionPageState extends State<SessionPage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _workoutTimerBanner() {
+    final isRunning = session.startTime != null && !session.isFinished;
+
+    return Card(
+      color: isRunning
+          ? Colors.tealAccent.withOpacity(0.12)
+          : Colors.white10,
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(
+              isRunning ? Icons.timer : Icons.timer_outlined,
+              color: isRunning ? Colors.tealAccent : Colors.grey,
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  session.isFinished
+                      ? '오늘 총 운동 시간'
+                      : isRunning
+                          ? '운동 진행 중'
+                          : '운동 대기 중',
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+                Text(
+                  fmtDuration(session.durationSeconds),
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: isRunning ? Colors.tealAccent : Colors.white,
+                  ),
+                ),
+              ],
+            ),
+            const Spacer(),
+            if (!session.isFinished)
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isRunning ? Colors.amber : Colors.tealAccent,
+                  foregroundColor: Colors.black,
+                ),
+                icon: Icon(isRunning ? Icons.pause : Icons.play_arrow),
+                label: Text(isRunning ? '일시정지' : '운동 시작'),
+                onPressed: _toggleWorkoutStart,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final st = widget.store;
@@ -278,6 +378,7 @@ class _SessionPageState extends State<SessionPage> with WidgetsBindingObserver {
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
         children: [
           if (isToday && st.needsBackup) _backupBanner(),
+          _workoutTimerBanner(),
           if (session.exercises.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 48),
